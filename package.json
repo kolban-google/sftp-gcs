@@ -1,0 +1,17 @@
+{
+  "name": "sftp",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google-cloud/storage": "^5.5.0",
+    "ssh2": "^0.8.9",
+    "ssh2-streams": "^0.4.10",
+    "yargs": "^16.1.1"
+  }
+}
