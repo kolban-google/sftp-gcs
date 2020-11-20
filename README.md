@@ -22,6 +22,10 @@ Arguments:
 
 * `--bucket [BUCKET_NAME]` - The name of the bucket to work against.
 * `--port [PORT_NUMBER]` - The TCP/IP port number for the server to listen upon.  Defaults to 22.
+* `--service-account-key-file [KEY_FILE]` - A path to a local file that contains the keys for a Service Account.
+
+
+The application needs credentials to be able to interact with GCS.  The default is to use the application default credentials for the environment in which the application is running.  These will either be retrieved from the server's metadata (if the application is running on GCP) or from the XXX environment variable if set.  We can use the `--service-account-key-file` to explicitly point to a file local to the application from which service account keys may be retrieved.  If supplied, this will be used in preference to other stories.
 
 Here is an example of use:
 

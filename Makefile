@@ -6,6 +6,7 @@ all:
 	@echo "dockerbuild - Run docker to build a local image"
 
 run:
+	#node index.js --bucket kolban-test1 --port 9022 --service-account-key-file=keys/sftp-gcs-sa.json
 	node index.js --bucket kolban-test1 --port 9022
 
 cloudbuild:
