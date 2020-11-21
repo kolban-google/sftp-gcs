@@ -140,7 +140,7 @@ new ssh2.Server({
                 // o TRUNC
                 // o EXCL
                 //
-                sftpStream.on('OPEN', function (reqId, filename, flags, attrs) {
+                sftpStream.on('OPEN', async function (reqId, filename, flags, attrs) {
                     console.log(`OPEN<${reqId}>: filename: ${filename}, flags: ${SFTPStream.flagsToString(flags)}`)
                     
                     const handle = handleCount;
@@ -162,9 +162,9 @@ new ssh2.Server({
                             console.log('GCS stream closed');
                             if (fileRecord.hasOwnProperty('reqid')) {
                                 if (fileRecord.gcsError === true) {
-                                    sftpStream.status(fileRecord.reqid, STATUS_CODE.FAILURE);
+                                    sftpStream.status(fileRecord.reqId, STATUS_CODE.FAILURE);
                                 } else {
-                                    sftpStream.status(fileRecord.reqid, STATUS_CODE.OK);
+                                    sftpStream.status(fileRecord.reqId, STATUS_CODE.OK);
                                 }
                             }
                         });
@@ -174,10 +174,155 @@ new ssh2.Server({
                         fileRecord.gcsError = false;
                         fileRecord.gcsEnd = false;
                         fileRecord.gcsOffset = 0;
+                        fileRecord.gcsData = null;
+                        fileRecord.readQueue = [];
+                        /*
+                        fileRecord.getMoreGCSData = () => {
+                            console.log('>>> Get more GCS Data');
+                            fileRecord.readStream.once('readable', () => {
+                                console.log(`onReadable fired: readableLength: ${fileRecord.readStream.readableLength}`);
+                                const data = fileRecord.readStream.read();
+                                if (fileRecord.gcsData == null) {
+                                    fileRecord.gcsData = data;
+                                } else {
+                                    if (data !== null) {
+                                        fileRecord.gcsData = Buffer.concat([fileRecord.gcsData, data]);
+                                    }
+                                }
+                                console.log(`Data read from gcs: ${util.inspect(data)}, new gcsData size: ${fileRecord.gcsData.length}`);
+                                fileRecord.processQueue();
+                            });
+                        };
+                        */
+
+                        fileRecord.getAllGCSData = () => {
+                            console.log(`getAllGCSData: onReadable fired: readableLength: ${fileRecord.readStream.readableLength}`);
+                            const data = fileRecord.readStream.read(10000);
+                            if (data == null) {
+                                return;
+                            }
+                            if (fileRecord.gcsData == null) {
+                                fileRecord.gcsData = data;
+                            } else {
+                                if (data !== null) {
+                                   fileRecord.gcsData = Buffer.concat([fileRecord.gcsData, data]);
+                                }
+                            }
+                            console.log(`Data read from gcs: ${util.inspect(data)}, new gcsData size: ${fileRecord.gcsData.length}`);
+                            fileRecord.processQueue();
+                        };
+
+                        fileRecord.getAllGCSData2 = () => {
+                            console.log(`getAllGCSData: onReadable fired: readableLength: ${fileRecord.readStream.readableLength}`);
+                            const data = fileRecord.readStream.read(1000000);
+                            if (data == null) {
+                                return;
+                            }
+                            if (fileRecord.gcsData == null) {
+                                fileRecord.gcsData = data;
+                            } else {
+                                if (data !== null) {
+                                   fileRecord.gcsData = Buffer.concat([fileRecord.gcsData, data]);
+                                }
+                            }
+                            console.log(`Data read from gcs: ${util.inspect(data)}, new gcsData size: ${fileRecord.gcsData.length}`);
+                            fileRecord.processQueue();
+                        };
+
+                        fileRecord.processQueue = () => {
+                            while(true) {
+                                console.log(">> processQueue");
+                                let d = "";
+                                for (let i=0; i<fileRecord.readQueue.length; i++) {
+                                    d += `[<${fileRecord.readQueue[i].reqId}>, ${fileRecord.readQueue[i].offset}, ${fileRecord.readQueue[i].length}]`
+                                }
+                                console.log(`Queue size: ${fileRecord.readQueue.length}: ${d}`);
+                                if (fileRecord.readQueue.length == 0) {
+                                    return;
+                                }
+                                if (fileRecord.gcsData === null && !fileRecord.gcsEnd) {
+                                    //fileRecord.getMoreGCSData();
+                                    return;
+                                }
+                                let currentRecord = fileRecord.readQueue[0];
+                                let currentIndex = 0;
+                                for (let i=1; i<fileRecord.readQueue.length; i++) {
+                                    if (fileRecord.readQueue[i].offset < currentRecord.offset) {
+                                        currentRecord = fileRecord.readQueue[i];
+                                        currentIndex = i;
+                                    }
+                                }
+                                console.log(`Lowest offset = ${currentRecord.offset}`);
+                                if (currentRecord.offset != fileRecord.gcsOffset) {
+                                    console.log(`Something worrying occurred ... lowest read offset was ${currentRecord.offset} but gcs offset was ${fileRecord.gcsOffset}`);
+                                    //return;
+                                }
+                                if (!fileRecord.gcsEnd && fileRecord.gcsData.length <= currentRecord.length) {
+                                    //fileRecord.getMoreGCSData();
+                                    return;
+                                }
+                                
+                                if (fileRecord.gcsData !== null) {
+                                    let gcsDataToSend;
+                                    if (fileRecord.gcsData.length <= currentRecord.length) {
+                                        gcsDataToSend = fileRecord.gcsData;
+                                        fileRecord.gcsData = null;
+                                    } else {
+                                        gcsDataToSend = fileRecord.gcsData.slice(0, currentRecord.length);
+                                        fileRecord.gcsData = fileRecord.gcsData.slice(currentRecord.length);
+                                    }
+                                    console.log(`Responding to READ<${currentRecord.reqId}> with data of length ${gcsDataToSend.length}`);
+                                    sftpStream.data(currentRecord.reqId, gcsDataToSend);
+                                    fileRecord.gcsOffset += gcsDataToSend.length;
+                                } else {
+                                    console.log(`Responding to READ<${currentRecord.reqId}> with EOF`);
+                                    sftpStream.status(currentRecord.reqId, STATUS_CODE.EOF);
+                                }
+                                fileRecord.readQueue.splice(currentIndex, 1);
+                            }
+
+                        };
                         fileRecord.readStream = fileRecord.gcsFile.createReadStream();
+                        //fileRecord.readStream.pause();
+                        console.log(`Highwater mark: ${fileRecord.readStream.readableHighWaterMark}`);
+                        console.log(`is paused: ${fileRecord.readStream.isPaused()}`)
                         fileRecord.readStream.on('error', (err) => {
                             console.log(`GCS readStream: Error: ${err}`);
                         });
+                        fileRecord.readStream.on('end', () => {
+                            console.log('End detected');
+                            fileRecord.gcsEnd = true;
+                            fileRecord.processQueue();
+                        });
+                        /*
+                        fileRecord.readStream.on('readable', () => {
+                            console.log(`readable`);
+                        });
+                        */
+                       
+                        setInterval(function() {
+                            console.log(`tick: ${fileRecord.readStream.readableLength}`);
+                        }, 500);
+
+                        const stream = fileRecord.readStream;
+                        while(true) {
+                            const data = await new Promise((resolve,reject) => {
+                                stream.on('readable', () => {
+                                    console.log(`Readable: readableLength: ${stream.readableLength}, HighWaterMark: ${stream.readableHighWaterMark}`)
+                                    const data = stream.read(200000);
+                                    //const data = null;
+                                    if (data != null) {
+                                        stream.removeAllListeners('readable');
+                                        resolve(data);
+                                    }
+                                });
+                            });
+                            //const data = fileRecord.readStream.read();
+                            console.log(`data length: ${data.length}`);
+                        }
+                        
+
+                        //fileRecord.readStream.on('readable', fileRecord.getAllGCSData);
                         /*
                         fileRecord.readStream.on('readable', () => {
                             console.log(`Readable called`);
@@ -261,8 +406,14 @@ new ssh2.Server({
                     }
 
                     const fileRecord = openFiles[handle];
+                    fileRecord.readQueue.push({
+                        reqId: reqId,
+                        offset: offset,
+                        length: length
+                    });
+                    fileRecord.processQueue();
                     //console.log(`readableLength: ${fileRecord.readStream.readableLength}, readable: ${fileRecord.readStream.readable}, readableFlowing: ${fileRecord.readStream.readableFlowing}`)
-
+                    /*
                     if (fileRecord.readStream.readableEnded) {
                         console.log(`Readable has ended`)
                         sftpStream.status(reqId, STATUS_CODE.EOF);
