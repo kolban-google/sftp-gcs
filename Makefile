@@ -15,3 +15,6 @@ cloudbuild:
 
 dockerbuild:
 	docker build . --tag sftp-gcs
+
+sftp:
+	sftp -v -v -o Port=9022 -o LogLevel=DEBUG3 localhost

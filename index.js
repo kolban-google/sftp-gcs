@@ -63,6 +63,19 @@ if (serviceAccountKeyFile.length > 0) {
 const storage = new Storage(storageOptions); // Get access to the GCS environment
 const bucket = storage.bucket(BUCKET_NAME);
 
+function normalizePath(path) {
+    // If path starts with '/', remove '/'
+    if (path.startsWith('/')) {
+        path = path.substring(1);
+    }
+    return path;
+} // End normalizePath
+
+
+function fileLongEntry(name, isDirectory, size) {
+    return `${isDirectory?"d":"-"}rw-rw-rw- 1 none none ${size} Jan 1 1970 ${name}`;
+    //"-rwxr--r-- 1 bar bar 718 Dec 8 2009 foo",
+}
 
 new ssh2.Server({
     hostKeys: [fs.readFileSync('keys/host.key')]
@@ -142,6 +155,8 @@ new ssh2.Server({
                 //
                 sftpStream.on('OPEN', async function (reqId, filename, flags, attrs) {
                     console.log(`OPEN<${reqId}>: filename: ${filename}, flags: ${SFTPStream.flagsToString(flags)}`)
+
+                    filename = normalizePath(filename);
                     
                     const handle = handleCount;
                     handleCount = handleCount + 1;
@@ -169,182 +184,106 @@ new ssh2.Server({
                             }
                         });
                     } else if (flags & SFTPStream.OPEN_MODE.READ) {
+/**
+ * Handling reads for SFTP mapped to GCS is an interesting story.  SFTP assumes block oriented access to the files that it thinks it is
+ * reading.  SFTP clients send individual requests to read chunks of storage  For example, an SFTP client may send a request such as:
+ * 
+ * READ: reqId: 12, offset: 2048, maxLength: 512
+ * 
+ * This would be interpreted as read and return up to 512 bytes starting at offset 2048 into the file.  With GCS access, we retrieve our data
+ * as a stream of data starting from the beginning.  We have no way to ask GCS to obtain an arbitrary block.  We might think we can simply map the
+ * SFTP requests to serial consumption of the stream data but there are dangers in that story.  First of all, SFTP doesn't require that block
+ * read requests arrive one at a time or in order.  For example, the following two request messages may very well arrive:
+ * 
+ * READ: reqId: x, offset: 2048, maxLength: 512
+ * READ: reqId: y, offset: 0, maxLength: 1024
+ * 
+ * We may easily get a request for a block that comes later in the stream.  We can assume that we will eventually get requests for all blocks but
+ * must not assume that they come in order.  We can't simply process a read request with the next chunk of data read from the GCS object.  We
+ * should also note that we may get multiple READ requests before any previous ones have been satisfied.  Our SFTP server much honor the contract
+ * and not make assumptions on the order of the client send requests.
+ * 
+ * Our algorithm is to receive READ requests and place them in a Map() keyed by the offset start of the data.  From the GCS stream, we know what the
+ * offset of the incoming data is.  To be specific, when we start a new GCS stream, it is at offset 0.  As we consume data of length "n" from the
+ * stream, the next offset moves forward by "n".  This then gives us the notion of matching up READ requests for data at a given starting offset
+ * and data arriving from the GCS stream.  Whenever a new READ request arrives, we add it to the map and then "process the map".  We perform
+ * the following:
+ * 
+ * From the GCS stream we have a current "offset".  Do we have a READ request which starts at that offset?  If yes, we can return data.
+ * If no, we can not return data and must await some expected future READ request which does start at that offset.  When ever a new READ
+ * request arrives, we again perform this processing.  One further twist is that we don't want to return only the available data but instead
+ * we want to maximize the data returned in a READ request.  Let us look at an example.  Imagine we have a READ request that asks for data
+ * at offset 0 and a maximum length of 32768.  Now consider that from the GCS stream, we may have received 4096 bytes starting at offset 0.
+ * We could immediately satisfy the READ and return 4096 bytes.  This would be legal as per the SFTP spec but it would not be optimal.  Instead
+ * we want to wait until we have 32768 bytes (or more) to return in the READ request.  Adding this twist to our story means that we aren't
+ * just looking for some data, we are looking for as much data as possible.
+ * 
+ * 
+ * 
+ */
                         console.log(`Opening file for READ`);
-                        fileRecord.gcsFile = bucket.file(filename);
                         fileRecord.gcsError = false;
-                        fileRecord.gcsEnd = false;
-                        fileRecord.gcsOffset = 0;
-                        fileRecord.gcsData = null;
-                        fileRecord.readQueue = [];
-                        /*
-                        fileRecord.getMoreGCSData = () => {
-                            console.log('>>> Get more GCS Data');
-                            fileRecord.readStream.once('readable', () => {
-                                console.log(`onReadable fired: readableLength: ${fileRecord.readStream.readableLength}`);
-                                const data = fileRecord.readStream.read();
-                                if (fileRecord.gcsData == null) {
-                                    fileRecord.gcsData = data;
-                                } else {
-                                    if (data !== null) {
-                                        fileRecord.gcsData = Buffer.concat([fileRecord.gcsData, data]);
-                                    }
-                                }
-                                console.log(`Data read from gcs: ${util.inspect(data)}, new gcsData size: ${fileRecord.gcsData.length}`);
+                        let gcsEnd = false;
+                        let gcsOffset = 0;                        
+                        let activeRead = null;
+                        const readMap = new Map();
+                        fileRecord.getGCSData = function(offset, requestedLength) {
+                            return new Promise((resolve, reject) => {
+                                readMap.set(offset, {
+                                    "offset": offset,
+                                    "requestedLength": requestedLength,
+                                    "resolve": resolve,
+                                    "reject": reject
+                                });
                                 fileRecord.processQueue();
                             });
-                        };
-                        */
-
-                        fileRecord.getAllGCSData = () => {
-                            console.log(`getAllGCSData: onReadable fired: readableLength: ${fileRecord.readStream.readableLength}`);
-                            const data = fileRecord.readStream.read(10000);
-                            if (data == null) {
-                                return;
-                            }
-                            if (fileRecord.gcsData == null) {
-                                fileRecord.gcsData = data;
-                            } else {
-                                if (data !== null) {
-                                   fileRecord.gcsData = Buffer.concat([fileRecord.gcsData, data]);
-                                }
-                            }
-                            console.log(`Data read from gcs: ${util.inspect(data)}, new gcsData size: ${fileRecord.gcsData.length}`);
-                            fileRecord.processQueue();
-                        };
-
-                        fileRecord.getAllGCSData2 = () => {
-                            console.log(`getAllGCSData: onReadable fired: readableLength: ${fileRecord.readStream.readableLength}`);
-                            const data = fileRecord.readStream.read(1000000);
-                            if (data == null) {
-                                return;
-                            }
-                            if (fileRecord.gcsData == null) {
-                                fileRecord.gcsData = data;
-                            } else {
-                                if (data !== null) {
-                                   fileRecord.gcsData = Buffer.concat([fileRecord.gcsData, data]);
-                                }
-                            }
-                            console.log(`Data read from gcs: ${util.inspect(data)}, new gcsData size: ${fileRecord.gcsData.length}`);
-                            fileRecord.processQueue();
-                        };
-
-                        fileRecord.processQueue = () => {
-                            while(true) {
-                                console.log(">> processQueue");
-                                let d = "";
-                                for (let i=0; i<fileRecord.readQueue.length; i++) {
-                                    d += `[<${fileRecord.readQueue[i].reqId}>, ${fileRecord.readQueue[i].offset}, ${fileRecord.readQueue[i].length}]`
-                                }
-                                console.log(`Queue size: ${fileRecord.readQueue.length}: ${d}`);
-                                if (fileRecord.readQueue.length == 0) {
-                                    return;
-                                }
-                                if (fileRecord.gcsData === null && !fileRecord.gcsEnd) {
-                                    //fileRecord.getMoreGCSData();
-                                    return;
-                                }
-                                let currentRecord = fileRecord.readQueue[0];
-                                let currentIndex = 0;
-                                for (let i=1; i<fileRecord.readQueue.length; i++) {
-                                    if (fileRecord.readQueue[i].offset < currentRecord.offset) {
-                                        currentRecord = fileRecord.readQueue[i];
-                                        currentIndex = i;
-                                    }
-                                }
-                                console.log(`Lowest offset = ${currentRecord.offset}`);
-                                if (currentRecord.offset != fileRecord.gcsOffset) {
-                                    console.log(`Something worrying occurred ... lowest read offset was ${currentRecord.offset} but gcs offset was ${fileRecord.gcsOffset}`);
-                                    //return;
-                                }
-                                if (!fileRecord.gcsEnd && fileRecord.gcsData.length <= currentRecord.length) {
-                                    //fileRecord.getMoreGCSData();
-                                    return;
-                                }
-                                
-                                if (fileRecord.gcsData !== null) {
-                                    let gcsDataToSend;
-                                    if (fileRecord.gcsData.length <= currentRecord.length) {
-                                        gcsDataToSend = fileRecord.gcsData;
-                                        fileRecord.gcsData = null;
-                                    } else {
-                                        gcsDataToSend = fileRecord.gcsData.slice(0, currentRecord.length);
-                                        fileRecord.gcsData = fileRecord.gcsData.slice(currentRecord.length);
-                                    }
-                                    console.log(`Responding to READ<${currentRecord.reqId}> with data of length ${gcsDataToSend.length}`);
-                                    sftpStream.data(currentRecord.reqId, gcsDataToSend);
-                                    fileRecord.gcsOffset += gcsDataToSend.length;
-                                } else {
-                                    console.log(`Responding to READ<${currentRecord.reqId}> with EOF`);
-                                    sftpStream.status(currentRecord.reqId, STATUS_CODE.EOF);
-                                }
-                                fileRecord.readQueue.splice(currentIndex, 1);
-                            }
-
-                        };
-                        fileRecord.readStream = fileRecord.gcsFile.createReadStream();
+                        }; // End of getData()
+                        const gcsStream = bucket.file(filename).createReadStream();
                         //fileRecord.readStream.pause();
-                        console.log(`Highwater mark: ${fileRecord.readStream.readableHighWaterMark}`);
-                        console.log(`is paused: ${fileRecord.readStream.isPaused()}`)
-                        fileRecord.readStream.on('error', (err) => {
+                        //console.log(`Highwater mark: ${gcsStream.readableHighWaterMark}`);
+                        //console.log(`is paused: ${gcsStream.isPaused()}`)
+                        gcsStream.on('error', (err) => {
                             console.log(`GCS readStream: Error: ${err}`);
                         });
-                        fileRecord.readStream.on('end', () => {
-                            console.log('End detected');
-                            fileRecord.gcsEnd = true;
+                        gcsStream.on('end', () => {
+                            console.log(`End of GCS stream`);
+                            gcsEnd = true;
+                        });
+                        gcsStream.on('readable', () => {
                             fileRecord.processQueue();
                         });
-                        /*
-                        fileRecord.readStream.on('readable', () => {
-                            console.log(`readable`);
-                        });
-                        */
-                       
-                        setInterval(function() {
-                            console.log(`tick: ${fileRecord.readStream.readableLength}`);
-                        }, 500);
-
-                        const stream = fileRecord.readStream;
-                        while(true) {
-                            const data = await new Promise((resolve,reject) => {
-                                stream.on('readable', () => {
-                                    console.log(`Readable: readableLength: ${stream.readableLength}, HighWaterMark: ${stream.readableHighWaterMark}`)
-                                    const data = stream.read(200000);
-                                    //const data = null;
-                                    if (data != null) {
-                                        stream.removeAllListeners('readable');
-                                        resolve(data);
-                                    }
+                        fileRecord.processQueue = function() {
+                            //console.log(`processQueue`);
+                            if (gcsEnd) {
+                                readMap.forEach((entry) => {
+                                    readMap.delete(entry.offset);
+                                    entry.resolve(null);
                                 });
-                            });
-                            //const data = fileRecord.readStream.read();
-                            console.log(`data length: ${data.length}`);
-                        }
-                        
-
-                        //fileRecord.readStream.on('readable', fileRecord.getAllGCSData);
-                        /*
-                        fileRecord.readStream.on('readable', () => {
-                            console.log(`Readable called`);
-                            fileRecord.readStream.removeAllListeners('readable');
-                            const data = fileRecord.readStream.read();
-                            console.log(`data: ${util.inspect(data)}`);
-                        });
-                        */
-                       /*
-                        fileRecord.readStream.on('end', () => {
-                            console.log('GCS readStream: end');
-                            fileRecord.gcsEnd = true;
-                        });
-                        */
-                        /*
-                        fileRecord.readStream.on('data', (chunk) => {
-                            console.log(`Received ${chunk.length} bytes of data.`);
-                        });
-                        */
-                        //fileRecord.readStream.pause();
-
-                    } else {
+                                return;
+                            }
+                            while(true) {
+                                if (activeRead) {
+                                    const data = gcsStream.read(activeRead.requestedLength);
+                                    if (data === null) {
+                                        return;
+                                    }
+                                    //console.log(`Got data for offset: ${activeRead.offset}, data length: ${data.length}`);
+                                    activeRead.resolve(data);
+                                    readMap.delete(activeRead.offset);
+                                    activeRead = null;
+                                    gcsOffset += data.length;
+                                    //console.log(`Next offset requested is: ${gcsOffset}`);
+                                }
+                                if (!readMap.has(gcsOffset)) {
+                                    //console.log(`No record for offset ${gcsOffset}`);
+                                    return;
+                                }
+                                activeRead = readMap.get(gcsOffset);
+                                //console.log(`activeRead: ${activeRead.offset}, ${activeRead.requestedLength}`);
+                            } // End while true
+                        } // End processQueue
+                    } // End READ                                                              
+                    else {
                         console.log(`Open mode not supported`);
                         sftpStream.status(reqId, STATUS_CODE.FAILURE);
                         return;
@@ -354,7 +293,6 @@ new ssh2.Server({
                     const handleBuffer = Buffer.alloc(4);
                     handleBuffer.writeUInt32BE(handle, 0);
                     sftpStream.handle(reqId, handleBuffer);
-                    
                 }); // End handle OPEN
 
                 //
@@ -365,116 +303,217 @@ new ssh2.Server({
                 //
                 sftpStream.on('WRITE', function (reqId, handleBuffer, offset, data) {
                     // WRITE(< integer >reqID, < Buffer >handle, < integer >offset, < Buffer >data)
-                    console.log(`WRITE<${reqId}> to file at offset ${offset}: ${util.inspect(data)}`);
 
+                    // Validate that the handle buffer is the right size for a 32bit BE integer.
                     if (handleBuffer.length !== 4) {
-                        return sftpStream.status(reqId, STATUS_CODE.FAILURE);
+                        console.log("ERROR: Buffer wrong size for 32bit BE integer");
+                        sftpStream.status(reqId, STATUS_CODE.FAILURE);
+                        return;
                     }
 
                     const handle = handleBuffer.readUInt32BE(0);
+
+                    console.log(`WRITE<${reqId}>: handle: ${handle}, offset ${offset}: data.length=${data.length}`);
                     
                     if (!openFiles[handle]) {
+                        console.log(`Unable to file an open file for handle ${handle}`);
                         return sftpStream.status(reqId, STATUS_CODE.FAILURE);
                     }
                     
                     const fileRecord = openFiles[handle];
+
                     if (fileRecord.gcsError === true) {
                         console.log(`Returning failure in WRITE because of gcsError`);
                         sftpStream.status(reqId, STATUS_CODE.FAILURE);
                         return;
                     }
 
-                    fileRecord.writeStream.write(data);
-
-                    sftpStream.status(reqId, STATUS_CODE.OK);
+                    fileRecord.writeStream.write(data, () => {
+                        sftpStream.status(reqId, STATUS_CODE.OK);
+                    });                    
                 }); // End handle WRITE
 
-                sftpStream.on('READ', function(reqId, handleBuffer, offset, length){
-                    // READ(< integer >reqID, < Buffer >handle, < integer >offset, < integer >length)
-                    console.log(`READ<${reqId}> offset: ${offset}, max length: ${length}`);
 
+                sftpStream.on('READ', async function(reqId, handleBuffer, offset, requestedLength){
+                    // READ(< integer >reqID, < Buffer >handle, < integer >offset, < integer >length)
+
+                    // Validate that the handle buffer is the right size for a 32bit BE integer.
                     if (handleBuffer.length !== 4) {
-                        console.log("ERROR");
+                        console.log("ERROR: Buffer wrong size for 32bit BE integer");
                         return sftpStream.status(reqId, STATUS_CODE.FAILURE);
                     }
 
-                    const handle = handleBuffer.readUInt32BE(0);
+                    const handle = handleBuffer.readUInt32BE(0); // Get the handle of the file from the SFTP client.
+
+                    console.log(`READ<${reqId}> handle: ${handle}, offset: ${offset}, max length: ${requestedLength}`);
                     
                     if (!openFiles[handle]) {
-                        console.log(`Unable to find handle`);
+                        console.log(`Unable to find file with handle ${handle}`);
                         return sftpStream.status(reqId, STATUS_CODE.FAILURE);
                     }
 
                     const fileRecord = openFiles[handle];
-                    fileRecord.readQueue.push({
-                        reqId: reqId,
-                        offset: offset,
-                        length: length
-                    });
-                    fileRecord.processQueue();
-                    //console.log(`readableLength: ${fileRecord.readStream.readableLength}, readable: ${fileRecord.readStream.readable}, readableFlowing: ${fileRecord.readStream.readableFlowing}`)
-                    /*
-                    if (fileRecord.readStream.readableEnded) {
-                        console.log(`Readable has ended`)
-                        sftpStream.status(reqId, STATUS_CODE.EOF);
+
+                    // Request GCS data starting at a given offset for a requested length.  This is a promise that will
+                    // be eventually fulfilled.  The data returned is either a Buffer or null.  If null, that is the
+                    // indication that we have reached the end of file.
+                    const data = await fileRecord.getGCSData(offset, requestedLength);
+                    if (data === null) {  // If we get null, we have reached the end of file.
+                        return sftpStream.status(reqId, STATUS_CODE.EOF);
+                    }
+                    sftpStream.data(reqId, data); // Return the data requested.
+                }); // End handle READ
+
+        
+                sftpStream.on('MKDIR', async function(reqId, path, attrs) {
+                    // MKDIR(< integer >reqID, < string >path, < ATTRS >attrs)
+                    console.log(`MKDIR<${reqId}> path: "${path}", attrs: ${util.inspect(attrs)}`);
+                    path = normalizePath(path);
+                    const dirName = path + "/";
+                    const [exists] = await bucket.file(dirName).exists();
+                    if (exists) {
+                        console.log(`something call ${dirName} already exists`);
+                        sftpStream.status(reqId, STATUS_CODE.FAILURE);
                         return;
                     }
+                    const stream = bucket.file(dirName).createWriteStream();
+                    stream.end(()=>{
+                        sftpStream.status(reqId, STATUS_CODE.OK);
+                    });
 
-                    function onReadable() {
-                        console.log(`onReadable fired for ${reqId} called within READ: readableLength: ${fileRecord.readStream.readableLength}`);
-                        fileRecord.readStream.removeListener('end', onEnd);
-                        fileRecord.readStream.removeListener('readable', onReadable);
-                        const data = fileRecord.readStream.read();
-                        //console.log(`Data read from gcs: ${data}`);
-                        console.log(`data: ${util.inspect(data)}`);
-                        if (data !== null) {
-                            console.log(`< ${reqId}: Returning data for ${fileRecord.gcsOffset} to ${fileRecord.gcsOffset+ data.length} of size ${data.length}`);
-                            fileRecord.gcsOffset += data.length;
-                            sftpStream.data(reqId, data);
-                        } else {
-                            console.log(`Returning EOF`);
-                            sftpStream.status(reqId, STATUS_CODE.EOF);
+                    //return sftpStream.status(reqId, STATUS_CODE.FAILURE);
+                }); // End handle MKDIR
+
+                /**
+                 * Handle the SFTP OPENDIR request.
+                 * * reqId is the request identifier that is returned in a matching response.
+                 * * path is the directory that we are going to list
+                 */
+                sftpStream.on('OPENDIR', async function(reqId, path) {
+                    // OPENDIR(< integer >reqID, < string >path)
+                    
+                    console.log(`OPENDIR<${reqId}> path: "${path}"`);
+                    path = normalizePath(path);
+                    // Check that we have a directory to list.
+                    if (path !== "") {
+                        // Return an error
+                        // We have handled the simplest case, now we need to see if a directory exists with this name. Image we have been 
+                        // asked to open "/dir".  This will have been nofrmalized to "dir".  From a GCS perspective, we now want to determine if there are any files
+                        // that begin with the prefix "dir/".  If yes, then the directory exists.
+                        const [fileList] = await bucket.getFiles({
+                            "directory": path,
+                            "delimiter": "/",
+                            "autoPaginate": false
+                        });
+                        if (fileList.length == 0) {
+                            sftpStream.status(reqId, STATUS_CODE.NO_SUCH_FILE);
+                            return;
                         }
                     }
-                    function onEnd() {
-                        console.log(`onEnd fired for ${reqId}`);
-                        fileRecord.readStream.removeListener('end', onEnd);
-                        fileRecord.readStream.removeListener('readable', onReadable);
-                        console.log(`onEnd: Returning EOF`);
-                        sftpStream.status(reqId, STATUS_CODE.EOF);
+
+                    const handle = handleCount;
+                    handleCount = handleCount + 1;
+
+                    const fileRecord = {
+                        "path": path,
+                        "readComplete": false // Have we completed our reading of data.
+                    };
+
+                    openFiles[handle] = fileRecord;
+                    const handleBuffer = Buffer.alloc(4);
+                    handleBuffer.writeUInt32BE(handle, 0);
+                    sftpStream.handle(reqId, handleBuffer);
+                    //return sftpStream.status(reqId, STATUS_CODE.FAILURE);
+                }); // End handle OPENDIR
+
+
+                sftpStream.on('READDIR', async function(reqId, handleBuffer) {
+                    //
+                    // READDIR will be called multiple rimes following an OPENDIR until the READDIR
+                    // indicated that we have reached EOF.  The READDIR will return an array of
+                    // directory objects where each object contains:
+                    // {
+                    //   filename:
+                    //   longname:
+                    //   attrs:
+                    // }
+                    //
+                    // READDIR(< integer >reqID, < Buffer >handle)
+                    //
+
+                    // Validate that the handle buffer is the right size for a 32bit BE integer.
+                    if (handleBuffer.length !== 4) {
+                        console.log("ERROR: Buffer wrong size for 32bit BE integer");
+                        return sftpStream.status(reqId, STATUS_CODE.FAILURE);
                     }
 
-                    fileRecord.readStream.on('end', onEnd);
-                    fileRecord.readStream.on('readable', onReadable);
-
+                    const handle = handleBuffer.readUInt32BE(0); // Get the handle of the file from the SFTP client.
                     
+                    if (!openFiles[handle]) {
+                        console.log(`Unable to find file with handle ${handle}`);
+                        //return sftpStream.status(reqId, STATUS_CODE.FAILURE);
+                    }
 
-                    /*
-                    const data = fileRecord.readStream.read();
-                    console.log(`Data read from gcs: ${data}`);
-                    if (data === null) {
+                    console.log(`READDIR<${reqId}>: handle: ${handle}`);
+
+                    const fileRecord = openFiles[handle];
+
+                    if (fileRecord.readComplete) {
+                        sftpStream.status(reqId, STATUS_CODE.EOF);
                         return;
                     }
-                    sftpStream.data(data);
-                    */
-                }); // End handle READ
-                
-                sftpStream.on('OPENDIR', function(reqId, path) {
-                    // OPENDIR(< integer >reqID, < string >path)
-                    console.log(`OPENDIR<${reqId}> path: ${path}`);
-                    return sftpStream.status(reqId, STATUS_CODE.FAILURE);
-                });
 
-                sftpStream.on('READDIR', function(reqId, handleBuffer) {
-                    // READDIR(< integer >reqID, < Buffer >handle)
-                    console.log(`READDIR<${reqId}>`);
-                    return sftpStream.status(reqId, STATUS_CODE.FAILURE);
-                });
+                    bucket.getFiles({
+                        "autoPaginate": false,
+                        "delimiter": '/',
+                        "directory": fileRecord.path
+                    }, (err, fileList, nextQuery, apiResponse) => {
+// The responses from a GCS file list are two parts.  One part is files in the current "directory" while the other part is the
+// list of directories.  This is of course fake as GCS has no concept of directories.
+//
+                        //console.log(`${util.inspect(fileList[0])}`);
+                        // imagine a/b/c/d.txt
+                        // we want just d.txt
+                        // /.*\//
+                        const results = [];
+                        fileList.forEach((file) => {
+                            if (file.name.endsWith('/')) {
+                                return;
+                            }
+                            const name = file.name.replace(/.*\//,'');
+                            console.log(name);
+                            results.push({
+                                "filename": name,
+                                "longname": fileLongEntry(name, false, file.metadata.size),
+                                "attrs": {
+                                    "size": file.metadata.size
+                                }
+                            });
+                        });
+                        if (apiResponse.prefixes) {
+                            apiResponse.prefixes.forEach((filePrefix) => {
+                                let fileName = filePrefix.substring(0, filePrefix.length-1);
+                                fileName = fileName.replace(/.*\//,'');
+                                results.push({
+                                    "filename": fileName,
+                                    "longname": fileLongEntry(fileName, true, 0),
+                                });
+                            });
+                        }
+                        //console.log(`prefixes: ${util.inspect(apiResponse.prefixes)}`)
+                        fileRecord.readComplete = true;
+                        //sftpStream.name(reqId, [{ filename: "fake1" }, { filename: "fake2" }]); 
+                        sftpStream.name(reqId, results);
+                    });
+                   
+                }); // End handle READDIR
+
 
                 sftpStream.on('LSTAT', async function(reqId, path) {
                     // LSTAT(< integer >reqID, < string >path)
                     // use attrs() to send attributes of the requested file back to the client.
                     console.log(`LSTAT<${reqId}: path: ${path}>`);
+                    path = normalizePath(path);
                     // Get the details of the GCS object.
 
                     try {
@@ -498,9 +537,11 @@ new ssh2.Server({
                     return;
                 }); // End handle LSTAT
                 
+
                 sftpStream.on('STAT', async function(reqId, path) {
                     // STAT(< integer >reqID, < string >path)
                     console.log(`STAT<${reqId}: path: ${path}>`);
+                    path = normalizePath(path);
                     try {
                         const [exists] = await bucket.file(path).exists();
                         if (!exists) {
@@ -524,44 +565,80 @@ new ssh2.Server({
                     }
                     
                     return;
-                });
+                }); // End handle STAT
+
 
                 sftpStream.on('FSTAT', function(reqId, handle) {
                     // FSTAT(< integer >reqID, < Buffer >handle)
                     console.log(`FSTAT<${reqId}>`);
                     return sftpStream.status(reqId, STATUS_CODE.FAILURE);
-                });
+                }); // End handle FSTAT
+
 
                 sftpStream.on('FSETSTAT', function(reqId, handle, attrs) {
                     // FSETSTAT(< integer >reqID, < Buffer >handle, < ATTRS >attrs)
                     console.log(`FSETSTAT<${reqId}>`);
                     return sftpStream.status(reqId, STATUS_CODE.FAILURE);
-                });
+                }); // End handle FSETSTAT
                 
-                
-                sftpStream.on('REMOVE', function(reqId, path) {
+
+                sftpStream.on('RENAME', async function(reqId, oldPath, newPath) {
+                    //RENAME(< integer >reqID, < string >oldPath, < string >newPath)
+                    console.log(`RENAME<${reqId}> oldPath: ${oldPath}, newPath: ${newPath}`);
+                    oldPath = normalizePath(oldPath);
+                    newPath = normalizePath(newPath);
+                    // Map the request to a GCS command to rename a GCS object.
+                    try {
+                        await bucket.file(oldPath).rename(newPath);
+                        return sftpStream.status(reqId, STATUS_CODE.OK);
+                    } catch(exc) {
+                        console.log(exc);
+                        return sftpStream.status(reqId, STATUS_CODE.FAILURE);
+                    }
+                }); // End of handle RENAME
+
+
+                sftpStream.on('REMOVE', async function(reqId, path) {
                     // REMOVE(< integer >reqID, < string >path)
-                    console.log(`REMOVE<${reqId}>`);
-                    return sftpStream.status(reqId, STATUS_CODE.FAILURE);
-                });
+                    console.log(`REMOVE<${reqId}, path: ${path}>`);
+                    path = normalizePath(path);
+                    // Map the request to a GCS command to delete/remove a GCS object.
+                    try {
+                        await bucket.file(path).delete();
+                        return sftpStream.status(reqId, STATUS_CODE.OK);
+                    }
+                    catch(exc) {
+                        //console.log(util.inspect(exc));
+                        console.log(exc);
+                        return sftpStream.status(reqId, STATUS_CODE.FAILURE);
+                    }
+                }); // End handle REMOVE
+
 
                 sftpStream.on('RMDIR', function(reqId, path) {
                     // RMDIR(< integer >reqID, < string >path)
-                    console.log(`RMDIR<${reqId}>`);
+                    console.log(`RMDIR<${reqId}>: path: ${path}`);
+                    path = normalizePath(path);
                     return sftpStream.status(reqId, STATUS_CODE.FAILURE);
-                });
+                }); // End handle RMDIR
+
                 
                 //
                 // Handle CLOSE
                 //
                 // Called when the client closes the file.  For example at the end of a write.
+                // The points where we know a close will be called include following an OPEN and an OPENDIR.
                 //
                 sftpStream.on('CLOSE', function (reqId, handleBuffer) {
-                    console.log(`CLOSE<${reqId}>`);
+
                     const handle = handleBuffer.readUInt32BE(0);
+                    console.log(`CLOSE<${reqId}>: handle: ${handle}`);
+
                     if (!openFiles[handle]) {
+                        console.log(`Unable to find an open file with handle ${handle}`);
                         return sftpStream.status(reqId, STATUS_CODE.FAILURE); 
                     }
+
                     const fileRecord = openFiles[handle];
                     
                     // Close the GCS file stream by calling end().  We save the SFTP request id in the fileRecord.  Notice
@@ -570,23 +647,14 @@ new ssh2.Server({
                     
                     delete openFiles[handle];
 
-                    fileRecord.reqid = reqId;
                     if (fileRecord.writeStream) {
-                        fileRecord.writeStream.end();
-                        return sftpStream.status(reqId, STATUS_CODE.OK);
-                    } else {
-                        return sftpStream.status(reqId, STATUS_CODE.OK);
-                    }
-                    
-                    /*
-                    if (fileRecord.gcsError === true) {
-                        console.log('close error');
-                        //sftpStream.status(reqid, STATUS_CODE.FAILURE);
+                        console.log(`Closing GCS write stream`);
+                        fileRecord.writeStream.end(() => {                            
+                            sftpStream.status(reqId, STATUS_CODE.OK);
+                        });
                         return;
                     }
-                    */
-                    //sftpStream.status(reqid, STATUS_CODE.OK);
-
+                    return sftpStream.status(reqId, STATUS_CODE.OK);                    
                 }); // End handle CLOSE
 
                 //
@@ -596,8 +664,14 @@ new ssh2.Server({
                 //
                 sftpStream.on('REALPATH', function (reqId, path) {
                     console.log(`REALPATH: ${path}`);
-                    sftpStream.name(reqId, [{ filename: "" }]);
-                    //sftpStream.status(reqid, STATUS_CODE.OK);
+                    if (path === '.') {
+                        sftpStream.name(reqId, [{ filename: "/" }]);
+                        return;
+                    }
+                    if (path.endsWith('.')) {
+                        path = path.substring(0, path.length-1);
+                    }
+                    sftpStream.name(reqId, [{ filename: path }]);
                 }); // End handle REALPATH
             }); // End on sftp
         }); // End on session

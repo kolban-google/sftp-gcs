@@ -39,3 +39,5 @@ sftp -o Port=9022 foo@localhost
 See also:
 
 * [sftp command - man(1) - sftp](https://linux.die.net/man/1/sftp)
+* [SSH File Transfer Protocol](https://en.wikipedia.org/wiki/SSH_File_Transfer_Protocols)
+* [SSH File Transfer Protocol - draft-ietf-secsh-filexfer-02.txt](https://tools.ietf.org/html/draft-ietf-secsh-filexfer-02)
