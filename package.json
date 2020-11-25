@@ -1,8 +1,8 @@
 {
-  "name": "sftp",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "name": "sftp-gcs",
+  "version": "0.0.1",
+  "description": "An SFTP server backed by Google Cloud Storage.",
+  "main": "sftp-gcs.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },

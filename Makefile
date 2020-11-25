@@ -6,8 +6,11 @@ all:
 	@echo "dockerbuild - Run docker to build a local image"
 
 run:
-	#node index.js --bucket kolban-test1 --port 9022 --service-account-key-file=keys/sftp-gcs-sa.json
-	node index.js --bucket kolban-test1 --port 9022
+	#node sftp-gcs.js --bucket kolban-test1 --port 9022 --service-account-key-file=keys/sftp-gcs-sa.json
+	#node sftp-gcs.js --bucket kolban-test1 --port 9022 --user=user --public-key-file=/home/kolban/.ssh/id_rsa.pub
+	#node sftp-gcs.js --bucket kolban-test1 --port 9022 --public-key-file=/home/kolban/.ssh/id_rsa.pub
+	node sftp-gcs.js --bucket kolban-test1 --port 9022
+	#node sftp-gcs.js --bucket kolban-test1 --port 22
 
 cloudbuild:
 	gcloud builds submit . --tag=$(IMAGE_LOCATION)
@@ -17,4 +20,4 @@ dockerbuild:
 	docker build . --tag sftp-gcs
 
 sftp:
-	sftp -v -v -o Port=9022 -o LogLevel=DEBUG3 localhost
+	sftp -v -v -o Port=9022 -o LogLevel=DEBUG3 user@localhost

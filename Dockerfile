@@ -4,5 +4,5 @@ COPY package*.json ./
 RUN npm install
 COPY . .
 
-EXPOSE 22
-CMD ["node", "index.js", "--bucket", "kolban-test1", "--port", "9022"]
+EXPOSE 9022
+CMD ["node", "sftp-gcs.js", "--bucket", "kolban-test1", "--port", "9022"]
