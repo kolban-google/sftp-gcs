@@ -642,6 +642,8 @@ new ssh2.Server({
                         return sftpStream.status(reqId, STATUS_CODE.EOF);
                     }
 
+                    fileRecord.readComplete = true;
+
                     bucket.getFiles({
                         "autoPaginate": false,
                         "delimiter": '/',
@@ -706,15 +708,18 @@ new ssh2.Server({
 // size  - integer - Resource size in bytes.                         
 // atime - integer - UNIX timestamp of the access time of the resource.
 // mtime - integer - UNIX timestamp of the modified time of the resource.                            
-                            results.push({
+                            const newNameRecord = {
                                 "filename": name,
                                 "longname": fileLongEntry(name, isDirectory, file.metadata.size, padding, new Date(file.metadata.timeCreated).toISOString()),
                                 "attrs": {
+                                    "mode": isDirectory?MODE_DIR:MODE_FILE,
                                     "size": Number(file.metadata.size),
                                     "atime": 0,
                                     "mtime": new Date(file.metadata.updated).getTime()/1000
                                 }
-                            });
+                            };
+                            results.push(newNameRecord);
+                            //logger.debug(util.inspect(newNameRecord));
                         });
                         
                         /*
@@ -914,6 +919,9 @@ new ssh2.Server({
                     logger.debug(`REALPATH<${reqId}>: path: "${path}"`);
                     path = PATH.normalize(path);
                     if (path === '..') {
+                        path = '/';
+                    }
+                    if (path === '.') {
                         path = '/';
                     }
                     logger.debug(`Returning "${path}"`);
