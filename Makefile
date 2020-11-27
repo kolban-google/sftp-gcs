@@ -6,10 +6,10 @@ all:
 	@echo "dockerbuild - Run docker to build a local image"
 
 run:
-	#node sftp-gcs.js --bucket kolban-test1 --port 9022 --service-account-key-file=keys/sftp-gcs-sa.json
+	#node sftp-gcs.js --bucket kolban-test1 --port 9022 --service-account-key-file=keys/sftp-gcs-sa.jsonX --debug debug
 	#node sftp-gcs.js --bucket kolban-test1 --port 9022 --user=user --public-key-file=/home/kolban/.ssh/id_rsa.pub
 	#node sftp-gcs.js --bucket kolban-test1 --port 9022 --public-key-file=/home/kolban/.ssh/id_rsa.pub
-	node sftp-gcs.js --bucket kolban-test1 --port 9022
+	node sftp-gcs.js --bucket gs://kolban-test1 --port 9022 --debug debug
 	#node sftp-gcs.js --bucket kolban-test1 --port 22
 
 cloudbuild:

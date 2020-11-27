@@ -12,12 +12,23 @@ const fs = require('fs');
 const crypto = require('crypto');
 const ssh2 = require('ssh2');
 const {SFTPStream} = require('ssh2-streams');
-const { COPYFILE_EXCL } = require('constants');
 const PATH = require('path');
+const winston = require('winston');
+const {format} = winston;
+
+// Imports the Google Cloud client library for Winston
+const {LoggingWinston} = require('@google-cloud/logging-winston');
+
+const loggingWinston = new LoggingWinston({
+    "logName": "sftp-gcs"
+});
+const myFormat = format.printf( ({ level, message, timestamp }) => {
+    return `${timestamp} ${level}: ${message}`;
+});
 
 const STATUS_CODE = ssh2.SFTP_STATUS_CODE;
 
-const MODE = fs.constants.S_IFREG | fs.constants.S_IRWXU | fs.constants.S_IRWXG | fs.constants.S_IRWXO;
+const MODE_FILE = fs.constants.S_IFREG | fs.constants.S_IRWXU | fs.constants.S_IRWXG | fs.constants.S_IRWXO;
 const MODE_DIR = fs.constants.S_IFDIR | fs.constants.S_IRWXU | fs.constants.S_IRWXG | fs.constants.S_IRWXO;
 
 // Parse the arguments
@@ -36,12 +47,27 @@ const argv = require('yargs')
     .options('password').describe('password', 'Password for SFTP client').string('password').nargs('password', 1).default('password', '')
     .options('public-key-file').describe('public-key-file', 'Publish SSH key').string('public-key-file').nargs('public-key-file', 1).default('public-key-file', '')
     .options('service-account-key-file').describe('service-account-key-file', 'Key file for service account').string('service-account-key-file').nargs('service-account-key-file', 1).default('service-account-key-file', '')
+    .options('debug').describe('debug', 'Set the debugging log level').string('debug').nargs('debug', 1).default('info', '')
     .argv;
 
 // Uncomment the following to log the passed in arguments.
 // console.log(`args: ${util.inspect(argv)}`);
 
-
+// Create a Winston logger that streams to Stackdriver Logging
+// Logs will be written to: "projects/YOUR_PROJECT_ID/logs/winston_log"
+const logger = winston.createLogger({
+    level: argv.debug,
+    transports: [
+      new winston.transports.Console(),
+      // Add Cloud Logging Logging
+      loggingWinston,
+    ],
+    format: format.combine(
+      format.label({ label: 'sftp-gcs', message: true }),
+      format.timestamp(),
+      myFormat
+    )
+  });
 /*
 ATTRS
 An object with the following valid properties:
@@ -59,7 +85,9 @@ const allowedPassword = argv.password;
 const serviceAccountKeyFile = argv["service-account-key-file"];
 const publicKeyFile = argv["public-key-file"];
 const SERVER_PORT = argv.port
-const BUCKET_NAME = argv.bucket;
+
+// If the byucket name begins with "gs://", remove it.
+const BUCKET_NAME = argv.bucket.replace(/gs:\/\//,'');
 
 let allowedPubKey = null;
 if (publicKeyFile !== "") {
@@ -71,8 +99,37 @@ if (serviceAccountKeyFile.length !== "") {
     storageOptions.keyFilename = serviceAccountKeyFile;
 }
 const storage = new Storage(storageOptions); // Get access to the GCS environment
-
 const bucket = storage.bucket(BUCKET_NAME); // The bucket is a global and provides access to the GCS data.
+
+/**
+ * We need a host key to be used to identify our server.  We will look for such a key in a few places.
+ * 
+ * Our algorithm will be:
+ * 
+ * ---
+ * if (/etc/ssh/ssh_host_rsa_key exists) {
+ *   if (we can read the file) {
+ *     Return the content as a host key
+ *   }
+ *   Warn that we found the file but could not read it.
+ * }
+ * Warn that we are going to use a default host key
+ * return the common host key.
+ * ---
+ */
+function getHostKey() {
+    if (fs.existsSync('/etc/ssh/ssh_host_rsa_key')) {
+        try {
+            return fs.readFileSync('/etc/ssh/ssh_host_rsa_key')
+        }
+        catch(err) {
+            logger.warn(`Unable to read /etc/ssh/ssh_host_rsa_key even though it exists.`);
+        }
+    }
+    logger.warn(`Unable to find/access a system host key, using the application default host key.`);
+    return fs.readFileSync('keys/default_host.key');
+} // getHostKey
+
 
 /**
  * We are passed paths that represent the SFTP client's vision of a path that is distinct from that of
@@ -94,7 +151,7 @@ function normalizePath(path) {
     if (path === '.') {
         path = '';
     }
-    console.log(`Converted ${start} to ${path}`)
+    logger.debug(`Converted "${start}" to "${path}"`)
     return path;
 } // End normalizePath
 
@@ -102,6 +159,8 @@ function normalizePath(path) {
 /**
  * Get the stat data of a file or directory.
  * @param {*} path 
+ * @returns An object describing the attributes of the thing at the path or null if no such object
+ * can be found.
  */
 async function getStatData(path) {
     if (path === "/") { // The root is a directory ... simple base/special case.
@@ -112,34 +171,37 @@ async function getStatData(path) {
     }
     path = normalizePath(path);
     try {
+
+        // We test to see if we have a file of the exact name.  If yes, then use it's attributes.
         let [exists] = await bucket.file(path).exists();
         if (exists) {
             const [metadata] = await bucket.file(path).getMetadata();
 
             const attrs = {
-                "mode": MODE,
+                "mode": MODE_FILE,
                 "size": Number(metadata.size)
             };
             return attrs;
         }
 
+        // We don't have an exact name match now we look to see if we have a file with this as a prefix.
         const [fileList] = await bucket.getFiles({
             "delimiter": '/',
             "directory": path,
             "autoPaginate": false
         });
         if (fileList.length == 0) {
-            console.log(`Could not find ${path}`);
+            logger.debug(`Could not find ${path}`);
             return null;
         }
-        console.log(`"${path}" is a directory!`)
+        logger.debug(`"${path}" is a directory!`)
         const attrs = {
             "mode": MODE_DIR
         };
         return attrs;
     }
     catch(exc) {
-        console.log(`STAT Error: ${exc}`);
+        logger.debug(`STAT Error: ${exc}`);
         return null;
     }    
     return null;
@@ -156,11 +218,11 @@ function fileLongEntry(name, isDirectory, size, padding, created) {
 
 
 new ssh2.Server({
-    hostKeys: [fs.readFileSync('keys/host.key')],
+    hostKeys: [getHostKey()],
     "greeting": "SFTP-GCS demon",
     "banner": "SFTP-GCS demon"
 }, function (client) {
-    console.log('Client connected!');
+    logger.debug('Client connected!');
 
     // ctx.username - The identity of the user asking to be authenticated,
     // ctx.method - How is the request being asked to authenticate?
@@ -170,57 +232,46 @@ new ssh2.Server({
     // We must either call ctx.reject() or ctx.accept()
     //
     client.on('authentication', function (ctx) {
-        console.log(`authentication: method=${ctx.method}`);
+        logger.debug(`authentication: method=${ctx.method}`);
         //var user = Buffer.from(ctx.username);
         switch (ctx.method) {
             case 'none':
                 if (allowedUser.length !== 0) {
-                    console.log(`We have at least a user to match`);
+                    logger.debug(`We have at least a user to match`);
                     return ctx.reject();
                 }
                 if (allowedPassword.length !== 0) {
-                    console.log(`We have at least a password to match`);
+                    logger.debug(`We have at least a password to match`);
                     return ctx.reject();
                 }
                 if (allowedPubKey !== null) {
-                    console.log(`We want a public key exchange`);
+                    logger.debug(`We want a public key exchange`);
                     return ctx.reject();
                 }
-                return ctx.accept(); // No userid and no password, come on in!
+                return ctx.accept(); // No userid and no password and no public key, come on in!
 
             case 'password':
                 // If a username was supplied when the sftp-gcs app was started and the supplied sftp client
                 // username does not match then we can't authenticate.
                 if (allowedUser.length > 0 && allowedUser !== ctx.username) {
-                    console.log(`usernames did not match`);
+                    logger.debug(`usernames did not match`);
                     return ctx.reject();
                 }
 
                 // If a password was supplied with the sftp-gcs app was started and the supplied sftp client
                 // password does not match then we can't authenticate.
                 if (allowedPassword.length > 0 && allowedPassword !== ctx.password) {
-                    console.log(`password did not match`)
+                    logger.debug(`password did not match`)
                     return ctx.reject();
                 }
 
                 return ctx.accept();
 
             case 'publickey':
-/**
- *  var allowedPubKey = utils.parseKey(fs.readFileSync('foo.pub'));
- * 
- *  var allowedPubSSHKey = allowedPubKey.getPublicSSH();
- *  if (ctx.key.algo !== allowedPubKey.type
- *    || ctx.key.data.length !== allowedPubSSHKey.length
- *    || !crypto.timingSafeEqual(ctx.key.data, allowedPubSSHKey)
- *    || (ctx.signature && allowedPubKey.verify(ctx.blob, ctx.signature) !== true)) {
- *    return ctx.reject();
- *  }
- */
-                console.log(`key: ${util.inspect(ctx.key)}, signature: ${util.inspect(ctx.signature)}`);
-                // We have not yet implemented publickey authentication so reject the caller.
+                logger.debug(`key: ${util.inspect(ctx.key)}, signature: ${util.inspect(ctx.signature)}`);
+
                 if (allowedPubKey === null) {
-                    console.log(`No PubKey`);
+                    logger.debug(`No PubKey`);
                     return ctx.reject();
                 }
                 var allowedPubSSHKey = allowedPubKey.getPublicSSH();
@@ -228,26 +279,26 @@ new ssh2.Server({
                    || ctx.key.data.length !== allowedPubSSHKey.length
                    || !crypto.timingSafeEqual(ctx.key.data, allowedPubSSHKey)
                    || (ctx.signature && allowedPubKey.verify(ctx.blob, ctx.signature) !== true)) {
-                    console.log(`Rejected login`);
+                    logger.debug(`Rejected login`);
                     return ctx.reject();
                 }
-                console.log(`SSH key allowed login`);
+                logger.debug(`SSH key allowed login`);
                 return ctx.accept();
 
             default:
                 return ctx.reject();
         }
 
-        ctx.accept();
+        ctx.reject(); // We should never reach here!!
     }); // End on authentication
 
     client.on('ready', function () {
-        console.log('Client authenticated!');
+        logger.debug('Client authenticated!');
 
         client.on('session', function (accept, reject) {
             const session = accept();
             session.on('sftp', function (accept, reject) {
-                console.log('Client SFTP session');
+                logger.debug('Client SFTP session');
                 const openFiles = new Map(); // The map of open files.
 
                 // Get the file record (the open file) from the set of open files based on the value contained in the
@@ -256,14 +307,14 @@ new ssh2.Server({
                 function getFileRecord(handleBuffer) {
                     // Validate that the handle buffer is the right size for a 32bit BE integer.
                     if (handleBuffer.length !== 4) {
-                        console.log("ERROR: Buffer wrong size for 32bit BE integer");
+                        logger.debug("ERROR: Buffer wrong size for 32bit BE integer");
                         return null;
                     }
 
                     const handle = handleBuffer.readUInt32BE(0); // Get the handle of the file from the SFTP client.
                     
                     if (!openFiles.has(handle)) {
-                        console.log(`Unable to find file with handle ${handle}`);
+                        logger.debug(`Unable to find file with handle ${handle}`);
                         return null;
                     }
 
@@ -297,7 +348,7 @@ new ssh2.Server({
                 // o EXCL
                 //
                 sftpStream.on('OPEN', async function (reqId, filename, flags, attrs) {
-                    console.log(`OPEN<${reqId}>: filename: "${filename}", flags: ${SFTPStream.flagsToString(flags)}`)
+                    logger.debug(`OPEN<${reqId}>: filename: "${filename}", flags: ${SFTPStream.flagsToString(flags)}`)
 
                     filename = normalizePath(filename);
                     
@@ -308,25 +359,15 @@ new ssh2.Server({
                     };
                     
                     if (flags & SFTPStream.OPEN_MODE.WRITE) {
-                        console.log('Opening file for WRITE');
+                        logger.debug('Opening file for WRITE');
 
                         // We now need to open the GCS file for writing.  It will be written in subsequent WRITE requests.
                         fileRecord.gcsFile = bucket.file(filename);
                         fileRecord.gcsError = false;
                         fileRecord.writeStream = fileRecord.gcsFile.createWriteStream();
                         fileRecord.writeStream.on('error', (err) => {
-                            console.log(`Detected an error with the GCS file: ${err}`);
+                            logger.debug(`Detected an error with writeStream to the GCS file: ${err}`);
                             fileRecord.gcsError = true;
-                        });
-                        fileRecord.writeStream.on('close', () => {
-                            console.log('GCS stream closed');
-                            if (fileRecord.hasOwnProperty('reqid')) {
-                                if (fileRecord.gcsError === true) {
-                                    sftpStream.status(fileRecord.reqId, STATUS_CODE.FAILURE);
-                                } else {
-                                    sftpStream.status(fileRecord.reqId, STATUS_CODE.OK);
-                                }
-                            }
                         });
                         // End of WRITE
                     } else if (flags & SFTPStream.OPEN_MODE.READ) {
@@ -364,7 +405,7 @@ new ssh2.Server({
  * we want to wait until we have 32768 bytes (or more) to return in the READ request.  Adding this twist to our story means that we aren't
  * just looking for some data, we are looking for as much data as possible.
  */
-                        console.log(`Opening file for READ`);
+                        logger.debug(`Opening file for READ`);
                         fileRecord.gcsError = false;
                         let gcsEnd = false;
                         let gcsOffset = 0;                        
@@ -384,20 +425,30 @@ new ssh2.Server({
                         const gcsStream = bucket.file(filename).createReadStream();
 
                         gcsStream.on('error', (err) => {
-                            console.log(`GCS readStream: Error: ${err}`);
+                            logger.debug(`GCS readStream: Error: ${err}`);
+                            fileRecord.gcsError = true;
                         });
                         gcsStream.on('end', () => {
-                            console.log(`End of GCS stream`);
+                            logger.debug(`End of GCS stream`);
                             gcsEnd = true;
                         });
                         gcsStream.on('readable', () => {
                             fileRecord.processQueue();
                         });
                         fileRecord.processQueue = function() {
+// If we have been asked to process the waiting for data queue and we have reached the EOF of the GCS stream
+// then the requests will never be fulfilled.  Resolve each of them with null indicating that we have no data.
                             if (gcsEnd) {
                                 readMap.forEach((entry) => {
                                     readMap.delete(entry.offset);
                                     entry.resolve(null);
+                                });
+                                return;
+                            }
+                            if (fileRecord.gcsError) {
+                                readMap.forEach((entry) => {
+                                    readMap.delete(entry.offset);
+                                    entry.reject(null);
                                 });
                                 return;
                             }
@@ -420,9 +471,8 @@ new ssh2.Server({
                         } // End processQueue
                     } // End READ                                                              
                     else {
-                        console.log(`Open mode not supported`);
-                        sftpStream.status(reqId, STATUS_CODE.FAILURE);
-                        return;
+                        logger.debug(`Open mode not supported`);
+                        return sftpStream.status(reqId, STATUS_CODE.FAILURE);
                     }
 
                     openFiles.set(handle, fileRecord); // We are indeed going to process opening a file ... so record the fileRecord.
@@ -446,54 +496,67 @@ new ssh2.Server({
                     const fileRecord = getFileRecord(handleBuffer);
                     if (fileRecord === null) { return sftpStream.status(reqId, STATUS_CODE.FAILURE); }
 
-                    console.log(`WRITE<${reqId}>: handle: ${fileRecord.handle}, offset ${offset}: data.length=${data.length}`);
+                    logger.debug(`WRITE<${reqId}>: handle: ${fileRecord.handle}, offset ${offset}: data.length=${data.length}`);
 
                     if (fileRecord.gcsError === true) {
-                        console.log(`Returning failure in WRITE because of gcsError`);
-                        sftpStream.status(reqId, STATUS_CODE.FAILURE);
-                        return;
+                        logger.debug(`Returning failure in WRITE because of flagged gcsError`);
+                        return sftpStream.status(reqId, STATUS_CODE.FAILURE);
                     }
 
                     fileRecord.writeStream.write(data, () => {
+                        //logger.debug(`<${reqId}>: Write completed`);
                         sftpStream.status(reqId, STATUS_CODE.OK);
                     });                    
                 }); // End handle WRITE
 
 
+                // Handle a SFTP protocol read request.  We are asked to get data starting at a given offset for
+                // a maximum requested length.  The outcome will either be data or a status of EOF.
                 sftpStream.on('READ', async function(reqId, handleBuffer, offset, requestedLength){
                     // READ(< integer >reqID, < Buffer >handle, < integer >offset, < integer >length)
 
                     const fileRecord = getFileRecord(handleBuffer);
                     if (fileRecord === null) { return sftpStream.status(reqId, STATUS_CODE.FAILURE); }
 
-                    console.log(`READ<${reqId}>: handle: ${fileRecord.handle}, offset: ${offset}, max length: ${requestedLength}`);
+                    logger.debug(`READ<${reqId}>: handle: ${fileRecord.handle}, offset: ${offset}, max length: ${requestedLength}`);
 
                     // Request GCS data starting at a given offset for a requested length.  This is a promise that will
                     // be eventually fulfilled.  The data returned is either a Buffer or null.  If null, that is the
                     // indication that we have reached the end of file.
-                    const data = await fileRecord.getGCSData(offset, requestedLength);
-                    if (data === null) {  // If we get null, we have reached the end of file.
-                        return sftpStream.status(reqId, STATUS_CODE.EOF);
+                    fileRecord.currentReqid = reqId;
+                    try {
+                        const data = await fileRecord.getGCSData(offset, requestedLength);
+                        if (data === null) {  // If we get null, we have reached the end of file.
+                            return sftpStream.status(reqId, STATUS_CODE.EOF);
+                        }
+                        return sftpStream.data(reqId, data); // Return the requested data.
+                    } catch(ex) {
+                        logger.debug(`Exception: ${util.inspect(ex)}`);
+                        return sftpStream.status(reqId, STATUS_CODE.FAILURE);
                     }
-                    sftpStream.data(reqId, data); // Return the data requested.
                 }); // End handle READ
 
         
                 sftpStream.on('MKDIR', async function(reqId, path, attrs) {
                     // MKDIR(< integer >reqID, < string >path, < ATTRS >attrs)
-                    console.log(`MKDIR<${reqId}>: path: "${path}", attrs: ${util.inspect(attrs)}`);
-                    path = normalizePath(path);
-                    const dirName = path + "/";
-                    const [exists] = await bucket.file(dirName).exists();
-                    if (exists) {
-                        console.log(`something call ${dirName} already exists`);
+                    logger.debug(`MKDIR<${reqId}>: path: "${path}", attrs: ${util.inspect(attrs)}`);
+                    try {
+                        path = normalizePath(path);
+                        const dirName = path + "/";
+                        const [exists] = await bucket.file(dirName).exists();
+                        if (exists) {
+                            logger.debug(`something called ${dirName} already exists`);
+                            return sftpStream.status(reqId, STATUS_CODE.FAILURE);
+                        }
+                        // Create a stream and then immediately end writing to it. This creates a zero length file.
+                        const stream = bucket.file(dirName).createWriteStream();
+                        stream.end(()=>{
+                            sftpStream.status(reqId, STATUS_CODE.OK);
+                        });
+                    } catch(ex) {
+                        logger.debug(`Exception: ${util.inspect(ex)}`);
                         sftpStream.status(reqId, STATUS_CODE.FAILURE);
-                        return;
                     }
-                    const stream = bucket.file(dirName).createWriteStream();
-                    stream.end(()=>{
-                        sftpStream.status(reqId, STATUS_CODE.OK);
-                    });
                 }); // End handle MKDIR
 
 
@@ -505,7 +568,7 @@ new ssh2.Server({
                 sftpStream.on('OPENDIR', async function(reqId, path) {
                     // OPENDIR(< integer >reqID, < string >path)
                     
-                    console.log(`OPENDIR<${reqId}> path: "${path}"`);
+                    logger.debug(`OPENDIR<${reqId}> path: "${path}"`);
                     path = normalizePath(path);
                     // Check that we have a directory to list.
                     if (path !== "") {
@@ -513,15 +576,19 @@ new ssh2.Server({
                         // We have handled the simplest case, now we need to see if a directory exists with this name. Imagine we have been 
                         // asked to open "/dir".  This will have been normalized to "dir".  From a GCS perspective, we now want to determine if there are any files
                         // that begin with the prefix "dir/".  If yes, then the directory exists.
-                        const [fileList] = await bucket.getFiles({
-                            "directory": path,
-                            "delimiter": "/",
-                            "autoPaginate": false
-                        });
-                        if (fileList.length == 0) {
-                            console.log(`we found no files/directories with directory: "${path}"`);
-                            sftpStream.status(reqId, STATUS_CODE.NO_SUCH_FILE);
-                            return;
+                        try {
+                            const [fileList] = await bucket.getFiles({
+                                "directory": path,
+                                "delimiter": "/",
+                                "autoPaginate": false
+                            });
+                            if (fileList.length == 0) {
+                                logger.debug(`we found no files/directories with directory: "${path}"`);
+                                return sftpStream.status(reqId, STATUS_CODE.NO_SUCH_FILE);
+                            }
+                        } catch(ex) {
+                            logger.debug(`Exception: ${util.inspect(ex)}`);
+                            return sftpStream.status(reqId, STATUS_CODE.FAILURE);
                         }
                     }
 
@@ -558,7 +625,7 @@ new ssh2.Server({
                     const fileRecord = getFileRecord(handleBuffer);
                     if (fileRecord === null) { return sftpStream.status(reqId, STATUS_CODE.FAILURE); }
 
-                    console.log(`READDIR<${reqId}>: handle: ${fileRecord.handle}`);
+                    logger.debug(`READDIR<${reqId}>: handle: ${fileRecord.handle}`);
 
                     // When READDIR is called, it is expected to return some (maybe all) of the files in the directory.
                     // It has two return values ... either one or more directory entries or an end of file marker indicating
@@ -567,8 +634,7 @@ new ssh2.Server({
                     // After the first call, we set a flag that indicates that the read of the directory is complete and that
                     // subsequent calls should return EOF.
                     if (fileRecord.readComplete) {
-                        sftpStream.status(reqId, STATUS_CODE.EOF);
-                        return;
+                        return sftpStream.status(reqId, STATUS_CODE.EOF);
                     }
 
                     bucket.getFiles({
@@ -579,12 +645,16 @@ new ssh2.Server({
 // The responses from a GCS file list are two parts.  One part is files in the current "directory" while the other part is the
 // list of directories.  This is of course fake as GCS has no concept of directories.
 //
+                        if (err) {
+                            logger.debug(`Err: ${util.inspect(err)}`);
+                            return sftpStream.status(reqId, STATUS_CODE.FAILURE);
+                        }
                         const results = [];
 
                         // Find the largest file size ...  We then determine how many characters this is and then
                         // this becomes the padding for the long entry listing.
                         let largest = 0;
-                        //console.log(`${util.inspect(fileList[0])}`);
+
                         fileList.forEach((file) => {
                             if (Number(file.metadata.size) > largest) {
                                 largest = file.metadata.size;
@@ -597,7 +667,7 @@ new ssh2.Server({
                                 return;
                             }
                             const name = file.name.replace(/.*\//,'');
-                            console.log(name);
+
                             results.push({
                                 "filename": name,
                                 "longname": fileLongEntry(name, false, file.metadata.size, padding, new Date(file.metadata.timeCreated).toISOString()),
@@ -618,7 +688,7 @@ new ssh2.Server({
                         }
 
                         fileRecord.readComplete = true; // Flag that a subseqent call should return EOF.
-                        sftpStream.name(reqId, results);
+                        return sftpStream.name(reqId, results);
                     });
                    
                 }); // End handle READDIR
@@ -627,14 +697,14 @@ new ssh2.Server({
                 sftpStream.on('LSTAT', async function(reqId, path) {
                     // LSTAT(< integer >reqID, < string >path)
                     // use attrs() to send attributes of the requested file back to the client.
-                    console.log(`LSTAT<${reqId}>: path: "${path}"`);
+                    logger.debug(`LSTAT<${reqId}>: path: "${path}"`);
                     commonStat(reqId, path);
                 }); // End handle LSTAT
                 
 
                 sftpStream.on('STAT', async function(reqId, path) {
                     // STAT(< integer >reqID, < string >path)
-                    console.log(`STAT<${reqId}>: path: "${path}"`);
+                    logger.debug(`STAT<${reqId}>: path: "${path}"`);
                     commonStat(reqId, path);
                 });
 
@@ -644,21 +714,21 @@ new ssh2.Server({
                     const fileRecord = getFileRecord(handleBuffer);
                     if (fileRecord === null) { return sftpStream.status(reqId, STATUS_CODE.FAILURE); }
 
-                    console.log(`FSTAT<${reqId}>: handle: ${fileRecord.handle} => path: "${fileRecord.path}"`);
+                    logger.debug(`FSTAT<${reqId}>: handle: ${fileRecord.handle} => path: "${fileRecord.path}"`);
                     commonStat(reqId, fileRecord.path);
                 }); // End handle FSTAT
 
 
                 sftpStream.on('FSETSTAT', function(reqId, handleBuffer, attrs) {
                     // FSETSTAT(< integer >reqID, < Buffer >handle, < ATTRS >attrs)
-                    console.log(`FSETSTAT<${reqId}>`);
+                    logger.debug(`FSETSTAT<${reqId}>`);
                     return sftpStream.status(reqId, STATUS_CODE.OP_UNSUPPORTED);
                 }); // End handle FSETSTAT
                 
 
                 sftpStream.on('RENAME', async function(reqId, oldPath, newPath) {
                     // RENAME(< integer >reqID, < string >oldPath, < string >newPath)
-                    console.log(`RENAME<${reqId}>: oldPath: ${oldPath}, newPath: ${newPath}`);
+                    logger.debug(`RENAME<${reqId}>: oldPath: ${oldPath}, newPath: ${newPath}`);
                     oldPath = normalizePath(oldPath);
                     newPath = normalizePath(newPath);
                     // Map the request to a GCS command to rename a GCS object.
@@ -666,7 +736,7 @@ new ssh2.Server({
                         await bucket.file(oldPath).rename(newPath);
                         return sftpStream.status(reqId, STATUS_CODE.OK);
                     } catch(exc) {
-                        console.log(exc);
+                        logger.debug(`Exception: ${util.inspect(exc)}`);
                         return sftpStream.status(reqId, STATUS_CODE.FAILURE);
                     }
                 }); // End of handle RENAME
@@ -674,10 +744,10 @@ new ssh2.Server({
 
                 sftpStream.on('REMOVE', async function(reqId, path) {
                     // REMOVE(< integer >reqID, < string >path)
-                    console.log(`REMOVE<${reqId}>: path: "${path}"`);
+                    logger.debug(`REMOVE<${reqId}>: path: "${path}"`);
                     path = normalizePath(path);
                     if (path.endsWith('/')) { // Sneaky user trying to remove a directory as though it were a file!
-                        console.log(`Can't remove a file ending with "/"`);
+                        logger.debug(`Can't remove a file ending with "/"`);
                         return sftpStream.status(reqId, STATUS_CODE.FAILURE);
                     }
                     // Map the request to a GCS command to delete/remove a GCS object.
@@ -686,7 +756,7 @@ new ssh2.Server({
                         return sftpStream.status(reqId, STATUS_CODE.OK);
                     }
                     catch(exc) {
-                        console.log(`Failed to delete file "${path}"`);
+                        logger.debug(`Failed to delete file "${path}"`);
                         return sftpStream.status(reqId, STATUS_CODE.FAILURE);
                     }
                 }); // End handle REMOVE
@@ -709,31 +779,36 @@ new ssh2.Server({
 //    That there is logically a directory called mydir but that it is not empty.
 // 4. Otherwise we fail the directory deletion request.
 //
-                    console.log(`RMDIR<${reqId}>: path: "${path}"`);
+                    logger.debug(`RMDIR<${reqId}>: path: "${path}"`);
                     path = normalizePath(path);
                     // If the path does NOT end in with a '/', then add one
                     if (!path.endsWith('/')) {
                         path = path + "/";
                     }
 
-                    // Let us see if we have files that end in path:
-                    const [fileList] = await bucket.getFiles({
-                        "autoPaginate": false,
-                        "delimiter": "/",
-                        "prefix": path,
-                        "maxResults": 2
-                    });
-                    if (fileList.length == 0) {
-                        console.log(`No such file/directory: "${path}"`);
-                        return sftpStream.status(reqId, STATUS_CODE.NO_SUCH_FILE);
-                    }
-                    if (fileList.length > 1) {
-                        console.log(`Directory not empty: "${path}"`);
+                    try {
+                        // Let us see if we have files that end in path:
+                        const [fileList] = await bucket.getFiles({
+                            "autoPaginate": false,
+                            "delimiter": "/",
+                            "prefix": path,
+                            "maxResults": 2
+                        });
+                        if (fileList.length == 0) {
+                            logger.debug(`No such file/directory: "${path}"`);
+                            return sftpStream.status(reqId, STATUS_CODE.NO_SUCH_FILE);
+                        }
+                        if (fileList.length > 1) {
+                            logger.debug(`Directory not empty: "${path}"`);
+                            return sftpStream.status(reqId, STATUS_CODE.FAILURE);
+                        }
+
+                        const [deleteResponse] = await bucket.file(path).delete();
+                        return sftpStream.status(reqId, STATUS_CODE.OK);
+                    } catch(ex) {
+                        logger.debug(`Exception: ${util.inspect(ex)}`);
                         return sftpStream.status(reqId, STATUS_CODE.FAILURE);
                     }
-
-                    const [deleteResponse] = await bucket.file(path).delete();
-                    return sftpStream.status(reqId, STATUS_CODE.OK);
                 }); // End handle RMDIR
 
                 
@@ -748,16 +823,19 @@ new ssh2.Server({
                     const fileRecord = getFileRecord(handleBuffer);
                     if (fileRecord === null) { return sftpStream.status(reqId, STATUS_CODE.FAILURE); }
 
-                    console.log(`CLOSE<${reqId}>: handle: ${fileRecord.handle}`);
+                    logger.debug(`CLOSE<${reqId}>: handle: ${fileRecord.handle}`);
                     
                     // Close the GCS file stream by calling end().  We save the SFTP request id in the fileRecord.  Notice
                     // that we don't flag the status of this stream request.  Instead, we assume that the call to end will result
                     // in a call to close() which will close the stream and THAT will send back the stream response.
-                    
                     openFiles.delete(fileRecord.handle);
 
                     if (fileRecord.writeStream) {
-                        console.log(`Closing GCS write stream`);
+                        logger.debug(`Closing GCS write stream`);
+                        if (fileRecord.gcsError) {
+                            logger.debug(`Returning error because of previous GCS Error with write stream`);
+                            return sftpStream.status(reqId, STATUS_CODE.FAILURE);
+                        }
                         fileRecord.writeStream.end(() => {                            
                             sftpStream.status(reqId, STATUS_CODE.OK);
                         });
@@ -772,9 +850,9 @@ new ssh2.Server({
                 // Called when the client wants to know the full path.
                 //
                 sftpStream.on('REALPATH', function (reqId, path) {                
-                    console.log(`REALPATH<${reqId}>: path: "${path}"`);
+                    logger.debug(`REALPATH<${reqId}>: path: "${path}"`);
                     path = PATH.normalize(path);
-                    console.log(`Returning "${path}"`);
+                    logger.debug(`Returning "${path}"`);
                     sftpStream.name(reqId, [{ filename: path }]);
                 }); // End handle REALPATH
             }); // End on sftp
@@ -782,26 +860,26 @@ new ssh2.Server({
     }); // End on ready
     
     client.on('end', function () {
-        console.log('Client disconnected');
+        logger.debug('Client disconnected');
     });
     client.on('error', (err) => {
-        console.log(`ERROR(client.on): ${util.inspect(err)}`);
+        logger.debug(`ERROR(client.on): ${util.inspect(err)}`);
     });
 }).listen(SERVER_PORT, '0.0.0.0', function () {
-    console.log("****************************************");
-    console.log("*** Google Cloud Storage SFTP Server ***");
-    console.log("****************************************");
-    console.log(`Using bucket: gs://${BUCKET_NAME}`);
-    console.log('Listening on port ' + this.address().port);
-    console.log(`Username: ${allowedUser === ''?'Not set':allowedUser}`);
-    console.log(`Password: ${allowedPassword === ''?'Not set':'********'}`);
-    console.log(`Public key file: ${publicKeyFile===''?'Not set':publicKeyFile}`);
-    console.log(`Service account key file: ${serviceAccountKeyFile===''?'Not set':serviceAccountKeyFile}`);
+    logger.info("****************************************");
+    logger.info("*** Google Cloud Storage SFTP Server ***");
+    logger.info("****************************************");
+    logger.info(`Using bucket: gs://${BUCKET_NAME}`);
+    logger.info('Listening on port ' + this.address().port);
+    logger.info(`Username: ${allowedUser === ''?'Not set':allowedUser}`);
+    logger.info(`Password: ${allowedPassword === ''?'Not set':'********'}`);
+    logger.info(`Public key file: ${publicKeyFile===''?'Not set':publicKeyFile}`);
+    logger.info(`Service account key file: ${serviceAccountKeyFile===''?'Not set':serviceAccountKeyFile}`);
 }).on('error', (err) => {
     // Capture any networking exception.  A common error is that we are asking the sftp-gcs server
     // to listen on a port that is already in use.  Check for that error and call it out specifically.
-    console.log(`Error with networking ${util.inspect(err)}`);
+    logger.info(`Error with networking ${util.inspect(err)}`);
     if (err.code === 'EACCES') {
-        console.log(`It is likely that an application is already listening on port ${err.port}.`);
+        logger.info(`It is likely that an application is already listening on port ${err.port}.`);
     }
 });

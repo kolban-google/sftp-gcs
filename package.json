@@ -6,12 +6,21 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "author": "",
-  "license": "ISC",
+  "author": {
+    "name" : "Neil Kolban",
+    "email" : "kolban@google.com"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type" : "git",
+    "url" : "https://github.com/kolban-google/sftp-gcs.git"
+  },
   "dependencies": {
+    "@google-cloud/logging-winston": "^4.0.1",
     "@google-cloud/storage": "^5.5.0",
     "ssh2": "^0.8.9",
     "ssh2-streams": "^0.4.10",
+    "winston": "^3.3.3",
     "yargs": "^16.1.1"
   }
 }
