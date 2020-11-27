@@ -18,6 +18,7 @@ const {format} = winston;
 
 // Imports the Google Cloud client library for Winston
 const {LoggingWinston} = require('@google-cloud/logging-winston');
+const { dir } = require('console');
 
 const loggingWinston = new LoggingWinston({
     "logName": "sftp-gcs"
@@ -149,6 +150,9 @@ function normalizePath(path) {
     }
     path = PATH.normalize(path);
     if (path === '.') {
+        path = '';
+    }
+    if (path === '..') {
         path = '';
     }
     logger.debug(`Converted "${start}" to "${path}"`)
@@ -355,7 +359,8 @@ new ssh2.Server({
                     const handle = handleCount;
                     handleCount = handleCount + 1;
                     const fileRecord = {
-                        "handle": handle
+                        "handle": handle,
+                        "path": filename
                     };
                     
                     if (flags & SFTPStream.OPEN_MODE.WRITE) {
@@ -625,7 +630,7 @@ new ssh2.Server({
                     const fileRecord = getFileRecord(handleBuffer);
                     if (fileRecord === null) { return sftpStream.status(reqId, STATUS_CODE.FAILURE); }
 
-                    logger.debug(`READDIR<${reqId}>: handle: ${fileRecord.handle}`);
+                    logger.debug(`READDIR<${reqId}>: handle: ${fileRecord.handle}, path: "${fileRecord.path}"`);
 
                     // When READDIR is called, it is expected to return some (maybe all) of the files in the directory.
                     // It has two return values ... either one or more directory entries or an end of file marker indicating
@@ -640,7 +645,8 @@ new ssh2.Server({
                     bucket.getFiles({
                         "autoPaginate": false,
                         "delimiter": '/',
-                        "directory": fileRecord.path
+                        "directory": fileRecord.path,
+                        "includeTrailingDelimiter": true
                     }, (err, fileList, nextQuery, apiResponse) => {
 // The responses from a GCS file list are two parts.  One part is files in the current "directory" while the other part is the
 // list of directories.  This is of course fake as GCS has no concept of directories.
@@ -662,20 +668,56 @@ new ssh2.Server({
                         });
                         const padding = String(largest).length;
 
+
+                        const dirPath = fileRecord.path + "/";
                         fileList.forEach((file) => {
+                            /*
                             if (file.name.endsWith('/')) {
                                 return;
                             }
-                            const name = file.name.replace(/.*\//,'');
+                            */
+                            //const name = file.name.replace(/.*\//,'');
+                            let isDirectory = false;
+                            let name = file.name;
+                            //logger.debug(`file name: ${util.inspect(name)}`);
 
+                            if (name.startsWith(dirPath)) {
+                                name = name.substring(dirPath.length);
+                            }
+                            //logger.debug(`file name2: ${util.inspect(name)}`);
+
+                            // Remove prefix
+
+                            if (name.endsWith('/')) {
+                                name = name.substr(0, name.length-1);
+                                isDirectory = true;
+                            }
+
+                            if (name === '') {
+                                return;
+                            }
+
+                            //logger.debug(`Metadata: ${util.inspect(file.metadata)}`);
+                           
+
+// mode  - integer - Mode/permissions for the resource.
+// uid   - integer - User ID of the resource.    
+// gid   - integer - Group ID of the resource.                         
+// size  - integer - Resource size in bytes.                         
+// atime - integer - UNIX timestamp of the access time of the resource.
+// mtime - integer - UNIX timestamp of the modified time of the resource.                            
                             results.push({
                                 "filename": name,
-                                "longname": fileLongEntry(name, false, file.metadata.size, padding, new Date(file.metadata.timeCreated).toISOString()),
+                                "longname": fileLongEntry(name, isDirectory, file.metadata.size, padding, new Date(file.metadata.timeCreated).toISOString()),
                                 "attrs": {
-                                    "size": file.metadata.size
+                                    "size": Number(file.metadata.size),
+                                    "atime": 0,
+                                    "mtime": new Date(file.metadata.updated).getTime()/1000
                                 }
                             });
                         });
+                        
+                        /*
                         if (apiResponse.prefixes) {
                             apiResponse.prefixes.forEach((filePrefix) => {
                                 let fileName = filePrefix.substring(0, filePrefix.length-1);
@@ -683,10 +725,17 @@ new ssh2.Server({
                                 results.push({
                                     "filename": fileName,
                                     "longname": fileLongEntry(fileName, true, 0, padding, ""),
+                                    "attrs": {
+                                        "size": 0,
+                                        "atime": 0,
+                                        "mtime": 0
+                                    }
                                 });
                             });
                         }
-
+                        */
+                        
+                        
                         fileRecord.readComplete = true; // Flag that a subseqent call should return EOF.
                         return sftpStream.name(reqId, results);
                     });
@@ -715,9 +764,21 @@ new ssh2.Server({
                     if (fileRecord === null) { return sftpStream.status(reqId, STATUS_CODE.FAILURE); }
 
                     logger.debug(`FSTAT<${reqId}>: handle: ${fileRecord.handle} => path: "${fileRecord.path}"`);
+                    if (!fileRecord.path) {
+                        logger.error("Internal error: FSTAT - no path in fileRecord!");
+                        return sftpStream.status(reqId, STATUS_CODE.FAILURE);
+                    }
                     commonStat(reqId, fileRecord.path);
                 }); // End handle FSTAT
 
+
+                sftpStream.on('SETSTAT', function(reqId, path, attrs) {
+                    // SETSTAT < integer >reqID, < string >path, < ATTRS >attrs)
+                    logger.debug(`SETSTAT<${reqId}>: path: "${path}", attrs: ${util.inspect(attrs)}`);
+                    // Although we don't actually set any attributes, we say that we did.  WinSCP seems to complain
+                    // if we say we didn't.
+                    return sftpStream.status(reqId, STATUS_CODE.OK);
+                }); // End handle FSETSTAT
 
                 sftpStream.on('FSETSTAT', function(reqId, handleBuffer, attrs) {
                     // FSETSTAT(< integer >reqID, < Buffer >handle, < ATTRS >attrs)
@@ -852,6 +913,9 @@ new ssh2.Server({
                 sftpStream.on('REALPATH', function (reqId, path) {                
                     logger.debug(`REALPATH<${reqId}>: path: "${path}"`);
                     path = PATH.normalize(path);
+                    if (path === '..') {
+                        path = '/';
+                    }
                     logger.debug(`Returning "${path}"`);
                     sftpStream.name(reqId, [{ filename: path }]);
                 }); // End handle REALPATH
