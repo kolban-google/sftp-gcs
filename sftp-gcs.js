@@ -250,7 +250,9 @@ new ssh2.Server({
                 }
                 if (allowedPubKey !== null) {
                     logger.debug(`We want a public key exchange`);
-                    return ctx.reject();
+                    // The following code lifted as a solution to this issue:
+                    // https://github.com/mscdex/ssh2/issues/235 for SSH2.
+                    return ctx.reject(['password', 'publickey'], true);
                 }
                 return ctx.accept(); // No userid and no password and no public key, come on in!
 
