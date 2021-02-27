@@ -242,11 +242,11 @@ new ssh2.Server({
             case 'none':
                 if (allowedUser.length !== 0) {
                     logger.debug(`We have at least a user to match`);
-                    return ctx.reject();
+                    return ctx.reject(['password', 'publickey'], true);
                 }
                 if (allowedPassword.length !== 0) {
                     logger.debug(`We have at least a password to match`);
-                    return ctx.reject();
+                    return ctx.reject(['password', 'publickey'], true);
                 }
                 if (allowedPubKey !== null) {
                     logger.debug(`We want a public key exchange`);
