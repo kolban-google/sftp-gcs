@@ -42,6 +42,7 @@ const MODE_DIR = fs.constants.S_IFDIR | fs.constants.S_IRWXU | fs.constants.S_IR
 //
 const argv = require('yargs')
     .usage('$0 --bucket BUCKET_NAME [--port PORT_NUM] [--user USER_NAME] [--password PASSWORD]')
+    .env('SFTP_GCS')
     .options('bucket').describe('bucket','GCS bucket to work with').string('bucket').nargs('bucket', 1).demandOption('bucket', 'Must supply a GCS bucket')
     .options('port').describe('port', 'Port number to listen upon').number('port').nargs('port', 1).default('port', 22, 'Default port is 22')
     .options('user').describe('user', 'Userid for SFTP client').string('user').nargs('user', 1).default('user', '')
