@@ -239,6 +239,7 @@ new ssh2.Server({
     client.on('authentication', function (ctx) {
         logger.debug(`authentication: method=${ctx.method}`);
         //var user = Buffer.from(ctx.username);
+        logger.debug(ctx.method);
         switch (ctx.method) {
             case 'none':
                 if (allowedUser.length !== 0) {
@@ -273,6 +274,7 @@ new ssh2.Server({
                 } 
                 if(allowedPassword.length == 0 && allowedPubKey != null) {
                     logger.debug(`password was not supplied, but pub key was. Checking pub key.`)
+
                 }
 
                 return ctx.accept();
