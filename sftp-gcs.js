@@ -270,6 +270,8 @@ new ssh2.Server({
                 if (allowedPassword.length > 0 && allowedPassword !== ctx.password) {
                     logger.debug(`password did not match`)
                     return ctx.reject();
+                } elseif (allowedPassword.length == 0 && allowedPubKey != null) {
+                    logger.debug(`password was not supplied, but pub key was. Checking pub key.`)
                 }
 
                 return ctx.accept();
