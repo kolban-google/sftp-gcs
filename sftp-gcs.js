@@ -7,23 +7,23 @@
  * 
  */
 const util = require('util');
-const {Storage} = require('@google-cloud/storage');
+const { Storage } = require('@google-cloud/storage');
 const fs = require('fs');
 const crypto = require('crypto');
 const ssh2 = require('ssh2');
-const {SFTPStream} = require('ssh2-streams');
+const { SFTPStream } = require('ssh2-streams');
 const PATH = require('path');
 const winston = require('winston');
-const {format} = winston;
+const { format } = winston;
 
 // Imports the Google Cloud client library for Winston
-const {LoggingWinston} = require('@google-cloud/logging-winston');
+const { LoggingWinston } = require('@google-cloud/logging-winston');
 const { dir } = require('console');
 
 const loggingWinston = new LoggingWinston({
     "logName": "sftp-gcs"
 });
-const myFormat = format.printf( ({ level, message, timestamp }) => {
+const myFormat = format.printf(({ level, message, timestamp }) => {
     return `${timestamp} ${level}: ${message}`;
 });
 
@@ -43,7 +43,7 @@ const MODE_DIR = fs.constants.S_IFDIR | fs.constants.S_IRWXU | fs.constants.S_IR
 const argv = require('yargs')
     .usage('$0 --bucket BUCKET_NAME [--port PORT_NUM] [--user USER_NAME] [--password PASSWORD]')
     .env('SFTP_GCS')
-    .options('bucket').describe('bucket','GCS bucket to work with').string('bucket').nargs('bucket', 1).demandOption('bucket', 'Must supply a GCS bucket')
+    .options('bucket').describe('bucket', 'GCS bucket to work with').string('bucket').nargs('bucket', 1).demandOption('bucket', 'Must supply a GCS bucket')
     .options('port').describe('port', 'Port number to listen upon').number('port').nargs('port', 1).default('port', 22, 'Default port is 22')
     .options('user').describe('user', 'Userid for SFTP client').string('user').nargs('user', 1).default('user', '')
     .options('password').describe('password', 'Password for SFTP client').string('password').nargs('password', 1).default('password', '')
@@ -60,16 +60,16 @@ const argv = require('yargs')
 const logger = winston.createLogger({
     level: argv.debug,
     transports: [
-      new winston.transports.Console(),
-      // Add Cloud Logging Logging
-      loggingWinston,
+        new winston.transports.Console(),
+        // Add Cloud Logging Logging
+        loggingWinston,
     ],
     format: format.combine(
-      format.label({ label: 'sftp-gcs', message: true }),
-      format.timestamp(),
-      myFormat
+        format.label({ label: 'sftp-gcs', message: true }),
+        format.timestamp(),
+        myFormat
     )
-  });
+});
 /*
 ATTRS
 An object with the following valid properties:
@@ -89,7 +89,7 @@ const publicKeyFile = argv["public-key-file"];
 const SERVER_PORT = argv.port
 
 // If the byucket name begins with "gs://", remove it.
-const BUCKET_NAME = argv.bucket.replace(/gs:\/\//,'');
+const BUCKET_NAME = argv.bucket.replace(/gs:\/\//, '');
 
 let allowedPubKey = null;
 if (publicKeyFile !== "") {
@@ -124,7 +124,7 @@ function getHostKey() {
         try {
             return fs.readFileSync('/etc/ssh/ssh_host_rsa_key')
         }
-        catch(err) {
+        catch (err) {
             logger.warn(`Unable to read /etc/ssh/ssh_host_rsa_key even though it exists.`);
         }
     }
@@ -205,10 +205,10 @@ async function getStatData(path) {
         };
         return attrs;
     }
-    catch(exc) {
+    catch (exc) {
         logger.debug(`STAT Error: ${exc}`);
         return null;
-    }    
+    }
     return null;
 } // getStatData
 
@@ -218,7 +218,7 @@ function fileLongEntry(name, isDirectory, size, padding, created) {
     if (isDirectory) {
         size = 0;
     }
-    return `${isDirectory?"d":"-"}rw-rw-rw- 1 none none ${String(size).padStart(padding)} ${created} ${name}`;
+    return `${isDirectory ? "d" : "-"}rw-rw-rw- 1 none none ${String(size).padStart(padding)} ${created} ${name}`;
 } // fileLongEntry
 
 
@@ -270,7 +270,7 @@ new ssh2.Server({
                 if (allowedPassword.length > 0 && allowedPassword !== ctx.password) {
                     logger.debug(`password did not match`)
                     return ctx.reject();
-                } elseif (allowedPassword.length == 0 && allowedPubKey != null) {
+                } elseif(allowedPassword.length == 0 && allowedPubKey != null) {
                     logger.debug(`password was not supplied, but pub key was. Checking pub key.`)
                 }
 
@@ -284,10 +284,22 @@ new ssh2.Server({
                     return ctx.reject();
                 }
                 var allowedPubSSHKey = allowedPubKey.getPublicSSH();
+                if (allowedUser !== null) {
+
+                    if (ctx.username !== allowedUser || ctx.key.algo !== allowedPubKey.type
+                        || ctx.key.data.length !== allowedPubSSHKey.length
+                        || !crypto.timingSafeEqual(ctx.key.data, allowedPubSSHKey)
+                        || (ctx.signature && allowedPubKey.verify(ctx.blob, ctx.signature) !== true)) {
+                        logger.debug(`Rejected login. Username and key must match.`);
+                        return ctx.reject();
+                    }
+                    logger.debug(`SSH key allowed login`);
+                    return ctx.accept();
+                }
                 if (ctx.key.algo !== allowedPubKey.type
-                   || ctx.key.data.length !== allowedPubSSHKey.length
-                   || !crypto.timingSafeEqual(ctx.key.data, allowedPubSSHKey)
-                   || (ctx.signature && allowedPubKey.verify(ctx.blob, ctx.signature) !== true)) {
+                    || ctx.key.data.length !== allowedPubSSHKey.length
+                    || !crypto.timingSafeEqual(ctx.key.data, allowedPubSSHKey)
+                    || (ctx.signature && allowedPubKey.verify(ctx.blob, ctx.signature) !== true)) {
                     logger.debug(`Rejected login`);
                     return ctx.reject();
                 }
@@ -321,7 +333,7 @@ new ssh2.Server({
                     }
 
                     const handle = handleBuffer.readUInt32BE(0); // Get the handle of the file from the SFTP client.
-                    
+
                     if (!openFiles.has(handle)) {
                         logger.debug(`Unable to find file with handle ${handle}`);
                         return null;
@@ -341,7 +353,7 @@ new ssh2.Server({
                     if (attrs === null) {
                         return sftpStream.status(reqId, STATUS_CODE.FAILURE);
                     }
-                    sftpStream.attrs(reqId, attrs);  
+                    sftpStream.attrs(reqId, attrs);
                 } // End of commonStat
 
                 //
@@ -360,14 +372,14 @@ new ssh2.Server({
                     logger.debug(`OPEN<${reqId}>: filename: "${filename}", flags: ${SFTPStream.flagsToString(flags)}`)
 
                     filename = normalizePath(filename);
-                    
+
                     const handle = handleCount;
                     handleCount = handleCount + 1;
                     const fileRecord = {
                         "handle": handle,
                         "path": filename
                     };
-                    
+
                     if (flags & SFTPStream.OPEN_MODE.WRITE) {
                         logger.debug('Opening file for WRITE');
 
@@ -381,47 +393,47 @@ new ssh2.Server({
                         });
                         // End of WRITE
                     } else if (flags & SFTPStream.OPEN_MODE.READ) {
-/**
- * Handling reads for SFTP mapped to GCS is an interesting story.  SFTP assumes block oriented access to the files that it thinks it is
- * reading.  SFTP clients send individual requests to read chunks of storage  For example, an SFTP client may send a request such as:
- * 
- * READ: reqId: 12, offset: 2048, maxLength: 512
- * 
- * This would be interpreted as read and return up to 512 bytes starting at offset 2048 into the file.  With GCS access, we retrieve our data
- * as a stream of data starting from the beginning.  We have no way to ask GCS to obtain an arbitrary block.  We might think we can simply map the
- * SFTP requests to serial consumption of the stream data but there are dangers in that story.  First of all, SFTP doesn't require that block
- * read requests arrive one at a time or in order.  For example, the following two request messages may very well arrive:
- * 
- * READ: reqId: x, offset: 2048, maxLength: 512
- * READ: reqId: y, offset: 0, maxLength: 1024
- * 
- * We may easily get a request for a block that comes later in the stream.  We can assume that we will eventually get requests for all blocks but
- * must not assume that they come in order.  We can't simply process a read request with the next chunk of data read from the GCS object.  We
- * should also note that we may get multiple READ requests before any previous ones have been satisfied.  Our SFTP server much honor the contract
- * and not make assumptions on the order of the client send requests.
- * 
- * Our algorithm is to receive READ requests and place them in a Map() keyed by the offset start of the data.  From the GCS stream, we know what the
- * offset of the incoming data is.  To be specific, when we start a new GCS stream, it is at offset 0.  As we consume data of length "n" from the
- * stream, the next offset moves forward by "n".  This then gives us the notion of matching up READ requests for data at a given starting offset
- * and data arriving from the GCS stream.  Whenever a new READ request arrives, we add it to the map and then "process the map".  We perform
- * the following:
- * 
- * From the GCS stream we have a current "offset".  Do we have a READ request which starts at that offset?  If yes, we can return data.
- * If no, we can not return data and must await some expected future READ request which does start at that offset.  When ever a new READ
- * request arrives, we again perform this processing.  One further twist is that we don't want to return only the available data but instead
- * we want to maximize the data returned in a READ request.  Let us look at an example.  Imagine we have a READ request that asks for data
- * at offset 0 and a maximum length of 32768.  Now consider that from the GCS stream, we may have received 4096 bytes starting at offset 0.
- * We could immediately satisfy the READ and return 4096 bytes.  This would be legal as per the SFTP spec but it would not be optimal.  Instead
- * we want to wait until we have 32768 bytes (or more) to return in the READ request.  Adding this twist to our story means that we aren't
- * just looking for some data, we are looking for as much data as possible.
- */
+                        /**
+                         * Handling reads for SFTP mapped to GCS is an interesting story.  SFTP assumes block oriented access to the files that it thinks it is
+                         * reading.  SFTP clients send individual requests to read chunks of storage  For example, an SFTP client may send a request such as:
+                         * 
+                         * READ: reqId: 12, offset: 2048, maxLength: 512
+                         * 
+                         * This would be interpreted as read and return up to 512 bytes starting at offset 2048 into the file.  With GCS access, we retrieve our data
+                         * as a stream of data starting from the beginning.  We have no way to ask GCS to obtain an arbitrary block.  We might think we can simply map the
+                         * SFTP requests to serial consumption of the stream data but there are dangers in that story.  First of all, SFTP doesn't require that block
+                         * read requests arrive one at a time or in order.  For example, the following two request messages may very well arrive:
+                         * 
+                         * READ: reqId: x, offset: 2048, maxLength: 512
+                         * READ: reqId: y, offset: 0, maxLength: 1024
+                         * 
+                         * We may easily get a request for a block that comes later in the stream.  We can assume that we will eventually get requests for all blocks but
+                         * must not assume that they come in order.  We can't simply process a read request with the next chunk of data read from the GCS object.  We
+                         * should also note that we may get multiple READ requests before any previous ones have been satisfied.  Our SFTP server much honor the contract
+                         * and not make assumptions on the order of the client send requests.
+                         * 
+                         * Our algorithm is to receive READ requests and place them in a Map() keyed by the offset start of the data.  From the GCS stream, we know what the
+                         * offset of the incoming data is.  To be specific, when we start a new GCS stream, it is at offset 0.  As we consume data of length "n" from the
+                         * stream, the next offset moves forward by "n".  This then gives us the notion of matching up READ requests for data at a given starting offset
+                         * and data arriving from the GCS stream.  Whenever a new READ request arrives, we add it to the map and then "process the map".  We perform
+                         * the following:
+                         * 
+                         * From the GCS stream we have a current "offset".  Do we have a READ request which starts at that offset?  If yes, we can return data.
+                         * If no, we can not return data and must await some expected future READ request which does start at that offset.  When ever a new READ
+                         * request arrives, we again perform this processing.  One further twist is that we don't want to return only the available data but instead
+                         * we want to maximize the data returned in a READ request.  Let us look at an example.  Imagine we have a READ request that asks for data
+                         * at offset 0 and a maximum length of 32768.  Now consider that from the GCS stream, we may have received 4096 bytes starting at offset 0.
+                         * We could immediately satisfy the READ and return 4096 bytes.  This would be legal as per the SFTP spec but it would not be optimal.  Instead
+                         * we want to wait until we have 32768 bytes (or more) to return in the READ request.  Adding this twist to our story means that we aren't
+                         * just looking for some data, we are looking for as much data as possible.
+                         */
                         logger.debug(`Opening file for READ`);
                         fileRecord.gcsError = false;
                         let gcsEnd = false;
-                        let gcsOffset = 0;                        
+                        let gcsOffset = 0;
                         let activeRead = null;
                         const readMap = new Map();
-                        fileRecord.getGCSData = function(offset, requestedLength) {
+                        fileRecord.getGCSData = function (offset, requestedLength) {
                             return new Promise((resolve, reject) => {
                                 readMap.set(offset, {
                                     "offset": offset,
@@ -445,9 +457,9 @@ new ssh2.Server({
                         gcsStream.on('readable', () => {
                             fileRecord.processQueue();
                         });
-                        fileRecord.processQueue = function() {
-// If we have been asked to process the waiting for data queue and we have reached the EOF of the GCS stream
-// then the requests will never be fulfilled.  Resolve each of them with null indicating that we have no data.
+                        fileRecord.processQueue = function () {
+                            // If we have been asked to process the waiting for data queue and we have reached the EOF of the GCS stream
+                            // then the requests will never be fulfilled.  Resolve each of them with null indicating that we have no data.
                             if (gcsEnd) {
                                 readMap.forEach((entry) => {
                                     readMap.delete(entry.offset);
@@ -462,7 +474,7 @@ new ssh2.Server({
                                 });
                                 return;
                             }
-                            while(true) {
+                            while (true) {
                                 if (activeRead) {
                                     const data = gcsStream.read(activeRead.requestedLength);
                                     if (data === null) {
@@ -516,13 +528,13 @@ new ssh2.Server({
                     fileRecord.writeStream.write(data, () => {
                         //logger.debug(`<${reqId}>: Write completed`);
                         sftpStream.status(reqId, STATUS_CODE.OK);
-                    });                    
+                    });
                 }); // End handle WRITE
 
 
                 // Handle a SFTP protocol read request.  We are asked to get data starting at a given offset for
                 // a maximum requested length.  The outcome will either be data or a status of EOF.
-                sftpStream.on('READ', async function(reqId, handleBuffer, offset, requestedLength){
+                sftpStream.on('READ', async function (reqId, handleBuffer, offset, requestedLength) {
                     // READ(< integer >reqID, < Buffer >handle, < integer >offset, < integer >length)
 
                     const fileRecord = getFileRecord(handleBuffer);
@@ -540,14 +552,14 @@ new ssh2.Server({
                             return sftpStream.status(reqId, STATUS_CODE.EOF);
                         }
                         return sftpStream.data(reqId, data); // Return the requested data.
-                    } catch(ex) {
+                    } catch (ex) {
                         logger.debug(`Exception: ${util.inspect(ex)}`);
                         return sftpStream.status(reqId, STATUS_CODE.FAILURE);
                     }
                 }); // End handle READ
 
-        
-                sftpStream.on('MKDIR', async function(reqId, path, attrs) {
+
+                sftpStream.on('MKDIR', async function (reqId, path, attrs) {
                     // MKDIR(< integer >reqID, < string >path, < ATTRS >attrs)
                     logger.debug(`MKDIR<${reqId}>: path: "${path}", attrs: ${util.inspect(attrs)}`);
                     try {
@@ -560,10 +572,10 @@ new ssh2.Server({
                         }
                         // Create a stream and then immediately end writing to it. This creates a zero length file.
                         const stream = bucket.file(dirName).createWriteStream();
-                        stream.end(()=>{
+                        stream.end(() => {
                             sftpStream.status(reqId, STATUS_CODE.OK);
                         });
-                    } catch(ex) {
+                    } catch (ex) {
                         logger.debug(`Exception: ${util.inspect(ex)}`);
                         sftpStream.status(reqId, STATUS_CODE.FAILURE);
                     }
@@ -575,9 +587,9 @@ new ssh2.Server({
                  * * reqId is the request identifier that is returned in a matching response.
                  * * path is the directory that we are going to list
                  */
-                sftpStream.on('OPENDIR', async function(reqId, path) {
+                sftpStream.on('OPENDIR', async function (reqId, path) {
                     // OPENDIR(< integer >reqID, < string >path)
-                    
+
                     logger.debug(`OPENDIR<${reqId}> path: "${path}"`);
                     path = normalizePath(path);
                     // Check that we have a directory to list.
@@ -596,7 +608,7 @@ new ssh2.Server({
                                 logger.debug(`we found no files/directories with directory: "${path}"`);
                                 return sftpStream.status(reqId, STATUS_CODE.NO_SUCH_FILE);
                             }
-                        } catch(ex) {
+                        } catch (ex) {
                             logger.debug(`Exception: ${util.inspect(ex)}`);
                             return sftpStream.status(reqId, STATUS_CODE.FAILURE);
                         }
@@ -618,7 +630,7 @@ new ssh2.Server({
                 }); // End handle OPENDIR
 
 
-                sftpStream.on('READDIR', async function(reqId, handleBuffer) {
+                sftpStream.on('READDIR', async function (reqId, handleBuffer) {
                     //
                     // READDIR will be called multiple rimes following an OPENDIR until the READDIR
                     // indicated that we have reached EOF.  The READDIR will return an array of
@@ -655,9 +667,9 @@ new ssh2.Server({
                         "directory": fileRecord.path,
                         "includeTrailingDelimiter": true
                     }, (err, fileList, nextQuery, apiResponse) => {
-// The responses from a GCS file list are two parts.  One part is files in the current "directory" while the other part is the
-// list of directories.  This is of course fake as GCS has no concept of directories.
-//
+                        // The responses from a GCS file list are two parts.  One part is files in the current "directory" while the other part is the
+                        // list of directories.  This is of course fake as GCS has no concept of directories.
+                        //
                         if (err) {
                             logger.debug(`Err: ${util.inspect(err)}`);
                             return sftpStream.status(reqId, STATUS_CODE.FAILURE);
@@ -696,7 +708,7 @@ new ssh2.Server({
                             // Remove prefix
 
                             if (name.endsWith('/')) {
-                                name = name.substr(0, name.length-1);
+                                name = name.substr(0, name.length - 1);
                                 isDirectory = true;
                             }
 
@@ -705,28 +717,28 @@ new ssh2.Server({
                             }
 
                             //logger.debug(`Metadata: ${util.inspect(file.metadata)}`);
-                           
 
-// mode  - integer - Mode/permissions for the resource.
-// uid   - integer - User ID of the resource.    
-// gid   - integer - Group ID of the resource.                         
-// size  - integer - Resource size in bytes.                         
-// atime - integer - UNIX timestamp of the access time of the resource.
-// mtime - integer - UNIX timestamp of the modified time of the resource.                            
+
+                            // mode  - integer - Mode/permissions for the resource.
+                            // uid   - integer - User ID of the resource.    
+                            // gid   - integer - Group ID of the resource.                         
+                            // size  - integer - Resource size in bytes.                         
+                            // atime - integer - UNIX timestamp of the access time of the resource.
+                            // mtime - integer - UNIX timestamp of the modified time of the resource.                            
                             const newNameRecord = {
                                 "filename": name,
                                 "longname": fileLongEntry(name, isDirectory, file.metadata.size, padding, new Date(file.metadata.timeCreated).toISOString()),
                                 "attrs": {
-                                    "mode": isDirectory?MODE_DIR:MODE_FILE,
+                                    "mode": isDirectory ? MODE_DIR : MODE_FILE,
                                     "size": Number(file.metadata.size),
                                     "atime": 0,
-                                    "mtime": new Date(file.metadata.updated).getTime()/1000
+                                    "mtime": new Date(file.metadata.updated).getTime() / 1000
                                 }
                             };
                             results.push(newNameRecord);
                             //logger.debug(util.inspect(newNameRecord));
                         });
-                        
+
                         /*
                         if (apiResponse.prefixes) {
                             apiResponse.prefixes.forEach((filePrefix) => {
@@ -744,31 +756,31 @@ new ssh2.Server({
                             });
                         }
                         */
-                        
-                        
+
+
                         fileRecord.readComplete = true; // Flag that a subseqent call should return EOF.
                         return sftpStream.name(reqId, results);
                     });
-                   
+
                 }); // End handle READDIR
 
 
-                sftpStream.on('LSTAT', async function(reqId, path) {
+                sftpStream.on('LSTAT', async function (reqId, path) {
                     // LSTAT(< integer >reqID, < string >path)
                     // use attrs() to send attributes of the requested file back to the client.
                     logger.debug(`LSTAT<${reqId}>: path: "${path}"`);
                     commonStat(reqId, path);
                 }); // End handle LSTAT
-                
 
-                sftpStream.on('STAT', async function(reqId, path) {
+
+                sftpStream.on('STAT', async function (reqId, path) {
                     // STAT(< integer >reqID, < string >path)
                     logger.debug(`STAT<${reqId}>: path: "${path}"`);
                     commonStat(reqId, path);
                 });
 
 
-                sftpStream.on('FSTAT', async function(reqId, handleBuffer) {
+                sftpStream.on('FSTAT', async function (reqId, handleBuffer) {
                     // FSTAT(< integer >reqID, < Buffer >handle)
                     const fileRecord = getFileRecord(handleBuffer);
                     if (fileRecord === null) { return sftpStream.status(reqId, STATUS_CODE.FAILURE); }
@@ -782,7 +794,7 @@ new ssh2.Server({
                 }); // End handle FSTAT
 
 
-                sftpStream.on('SETSTAT', function(reqId, path, attrs) {
+                sftpStream.on('SETSTAT', function (reqId, path, attrs) {
                     // SETSTAT < integer >reqID, < string >path, < ATTRS >attrs)
                     logger.debug(`SETSTAT<${reqId}>: path: "${path}", attrs: ${util.inspect(attrs)}`);
                     // Although we don't actually set any attributes, we say that we did.  WinSCP seems to complain
@@ -790,14 +802,14 @@ new ssh2.Server({
                     return sftpStream.status(reqId, STATUS_CODE.OK);
                 }); // End handle FSETSTAT
 
-                sftpStream.on('FSETSTAT', function(reqId, handleBuffer, attrs) {
+                sftpStream.on('FSETSTAT', function (reqId, handleBuffer, attrs) {
                     // FSETSTAT(< integer >reqID, < Buffer >handle, < ATTRS >attrs)
                     logger.debug(`FSETSTAT<${reqId}>`);
                     return sftpStream.status(reqId, STATUS_CODE.OP_UNSUPPORTED);
                 }); // End handle FSETSTAT
-                
 
-                sftpStream.on('RENAME', async function(reqId, oldPath, newPath) {
+
+                sftpStream.on('RENAME', async function (reqId, oldPath, newPath) {
                     // RENAME(< integer >reqID, < string >oldPath, < string >newPath)
                     logger.debug(`RENAME<${reqId}>: oldPath: ${oldPath}, newPath: ${newPath}`);
                     oldPath = normalizePath(oldPath);
@@ -806,14 +818,14 @@ new ssh2.Server({
                     try {
                         await bucket.file(oldPath).rename(newPath);
                         return sftpStream.status(reqId, STATUS_CODE.OK);
-                    } catch(exc) {
+                    } catch (exc) {
                         logger.debug(`Exception: ${util.inspect(exc)}`);
                         return sftpStream.status(reqId, STATUS_CODE.FAILURE);
                     }
                 }); // End of handle RENAME
 
 
-                sftpStream.on('REMOVE', async function(reqId, path) {
+                sftpStream.on('REMOVE', async function (reqId, path) {
                     // REMOVE(< integer >reqID, < string >path)
                     logger.debug(`REMOVE<${reqId}>: path: "${path}"`);
                     path = normalizePath(path);
@@ -826,7 +838,7 @@ new ssh2.Server({
                         await bucket.file(path).delete();
                         return sftpStream.status(reqId, STATUS_CODE.OK);
                     }
-                    catch(exc) {
+                    catch (exc) {
                         logger.debug(`Failed to delete file "${path}"`);
                         return sftpStream.status(reqId, STATUS_CODE.FAILURE);
                     }
@@ -836,20 +848,20 @@ new ssh2.Server({
                 /**
                  * Remove the directory named by path.
                  */
-                sftpStream.on('RMDIR', async function(reqId, path) {
+                sftpStream.on('RMDIR', async function (reqId, path) {
                     // RMDIR(< integer >reqID, < string >path)
-//
-// We need to check that the path exists and that it is a directory.
-// Imagine a request to delete a directory called "mydir".  We have a number of
-// known possibilities:
-//
-// 1. There is a gcs object called mydir.  This should not be deleted.  Return an error.
-// 2. There is a gcs object called mydir/.  This is indeed the directory and should be deleted BUT only ... if there are no objects that contain
-//    the mydir/ as a prefix.  If there are, then the directory can not be considered to be empty.
-// 3. There is no gcs object called mydir/ but there are objects that are prefixed mydir/.  We should not delete and return an error.  This would be an indication
-//    That there is logically a directory called mydir but that it is not empty.
-// 4. Otherwise we fail the directory deletion request.
-//
+                    //
+                    // We need to check that the path exists and that it is a directory.
+                    // Imagine a request to delete a directory called "mydir".  We have a number of
+                    // known possibilities:
+                    //
+                    // 1. There is a gcs object called mydir.  This should not be deleted.  Return an error.
+                    // 2. There is a gcs object called mydir/.  This is indeed the directory and should be deleted BUT only ... if there are no objects that contain
+                    //    the mydir/ as a prefix.  If there are, then the directory can not be considered to be empty.
+                    // 3. There is no gcs object called mydir/ but there are objects that are prefixed mydir/.  We should not delete and return an error.  This would be an indication
+                    //    That there is logically a directory called mydir but that it is not empty.
+                    // 4. Otherwise we fail the directory deletion request.
+                    //
                     logger.debug(`RMDIR<${reqId}>: path: "${path}"`);
                     path = normalizePath(path);
                     // If the path does NOT end in with a '/', then add one
@@ -876,13 +888,13 @@ new ssh2.Server({
 
                         const [deleteResponse] = await bucket.file(path).delete();
                         return sftpStream.status(reqId, STATUS_CODE.OK);
-                    } catch(ex) {
+                    } catch (ex) {
                         logger.debug(`Exception: ${util.inspect(ex)}`);
                         return sftpStream.status(reqId, STATUS_CODE.FAILURE);
                     }
                 }); // End handle RMDIR
 
-                
+
                 //
                 // Handle CLOSE
                 //
@@ -895,7 +907,7 @@ new ssh2.Server({
                     if (fileRecord === null) { return sftpStream.status(reqId, STATUS_CODE.FAILURE); }
 
                     logger.debug(`CLOSE<${reqId}>: handle: ${fileRecord.handle}`);
-                    
+
                     // Close the GCS file stream by calling end().  We save the SFTP request id in the fileRecord.  Notice
                     // that we don't flag the status of this stream request.  Instead, we assume that the call to end will result
                     // in a call to close() which will close the stream and THAT will send back the stream response.
@@ -907,12 +919,12 @@ new ssh2.Server({
                             logger.debug(`Returning error because of previous GCS Error with write stream`);
                             return sftpStream.status(reqId, STATUS_CODE.FAILURE);
                         }
-                        fileRecord.writeStream.end(() => {                            
+                        fileRecord.writeStream.end(() => {
                             sftpStream.status(reqId, STATUS_CODE.OK);
                         });
                         return;
                     }
-                    return sftpStream.status(reqId, STATUS_CODE.OK);                    
+                    return sftpStream.status(reqId, STATUS_CODE.OK);
                 }); // End handle CLOSE
 
                 //
@@ -920,7 +932,7 @@ new ssh2.Server({
                 //
                 // Called when the client wants to know the full path.
                 //
-                sftpStream.on('REALPATH', function (reqId, path) {                
+                sftpStream.on('REALPATH', function (reqId, path) {
                     logger.debug(`REALPATH<${reqId}>: path: "${path}"`);
                     path = PATH.normalize(path);
                     if (path === '..') {
@@ -935,7 +947,7 @@ new ssh2.Server({
             }); // End on sftp
         }); // End on session
     }); // End on ready
-    
+
     client.on('end', function () {
         logger.debug('Client disconnected');
     });
@@ -948,10 +960,10 @@ new ssh2.Server({
     logger.info("****************************************");
     logger.info(`Using bucket: gs://${BUCKET_NAME}`);
     logger.info('Listening on port ' + this.address().port);
-    logger.info(`Username: ${allowedUser === ''?'Not set':allowedUser}`);
-    logger.info(`Password: ${allowedPassword === ''?'Not set':'********'}`);
-    logger.info(`Public key file: ${publicKeyFile===''?'Not set':publicKeyFile}`);
-    logger.info(`Service account key file: ${serviceAccountKeyFile===''?'Not set':serviceAccountKeyFile}`);
+    logger.info(`Username: ${allowedUser === '' ? 'Not set' : allowedUser}`);
+    logger.info(`Password: ${allowedPassword === '' ? 'Not set' : '********'}`);
+    logger.info(`Public key file: ${publicKeyFile === '' ? 'Not set' : publicKeyFile}`);
+    logger.info(`Service account key file: ${serviceAccountKeyFile === '' ? 'Not set' : serviceAccountKeyFile}`);
 }).on('error', (err) => {
     // Capture any networking exception.  A common error is that we are asking the sftp-gcs server
     // to listen on a port that is already in use.  Check for that error and call it out specifically.
