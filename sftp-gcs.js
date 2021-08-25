@@ -239,7 +239,6 @@ new ssh2.Server({
     client.on('authentication', function (ctx) {
         logger.debug(`authentication: method=${ctx.method}`);
         //var user = Buffer.from(ctx.username);
-        logger.debug(ctx.method);
         switch (ctx.method) {
             case 'none':
                 if (allowedUser.length !== 0) {
@@ -271,10 +270,12 @@ new ssh2.Server({
                 if (allowedPassword.length > 0 && allowedPassword !== ctx.password) {
                     logger.debug(`password did not match`)
                     return ctx.reject();
-                } 
+                }
+                // If a password was NOT supplied with the sftp-gcs app was started, but a public key WAS supplied, 
+                // and the supplied sftp client did not provide a certificate, then we can't authenticate. 
                 if(allowedPassword.length == 0 && allowedPubKey != null) {
-                    logger.debug(`password was not supplied, but pub key was. Checking pub key.`)
-
+                    logger.debug(`password was not supplied, pub key is required. Pub key was NOT provided.`)
+                    return ctx.reject();
                 }
 
                 return ctx.accept();
