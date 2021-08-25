@@ -271,8 +271,8 @@ new ssh2.Server({
                     logger.debug(`password did not match`)
                     return ctx.reject();
                 }
-                // If a password was NOT supplied with the sftp-gcs app was started, but a public key WAS supplied, 
-                // and the supplied sftp client did not provide a certificate, then we can't authenticate. 
+                // If a password was NOT supplied when the sftp-gcs app was started, but a public key WAS supplied, 
+                // and the sftp client did not provide a keyfile, then we can't authenticate. 
                 if(allowedPassword.length == 0 && allowedPubKey != null) {
                     logger.debug(`password was not supplied, pub key is required. Pub key was NOT provided.`)
                     return ctx.reject();
