@@ -8,7 +8,10 @@ The application is written in Node.js and has been tested in a variety of runtim
 
 The current implementation of the solution supports only a single target bucket.
 
-In order for the SFTP application to be able to read and write from GCS, it must have an identity that it can use to authenticate.  The current implementation uses application default credentials.  This means that the application uses the environment configured values.
+- In order for the SFTP application to be able to read and write from GCS, it must have an identity that it can use to authenticate.  
+- In order for the SFTP application to be able to write to Google Cloud Logging, the identity must also have the role `roles/logging.admin` or `roles/logging.logWriter` in addition to having access to the GCS bucket. [Documentation reference](https://cloud.google.com/logging/docs/access-control)
+
+The current implementation uses application default credentials.  This means that the application uses the environment configured values.
 
 Arguments:
 
