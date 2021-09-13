@@ -25,12 +25,15 @@ The application needs credentials to be able to interact with GCS.  The default 
 
 When the sftp-gcs server is running we can connect SFTP clients to the server. In order to connect we must provide credentials.  We have choices.
 
-1. The client can posses a private key for the corresponding public key supplied in `--public-key-file`. 
-2. The client can supply a userid/password pair.
-3. The client need not supply any credentials for access.
-
+1. `--public-key-file` is supplied, `--user` AND `--password` are NOT supplied: The client must posses a private key for the corresponding public key supplied in `--public-key-file`. 
+2. `--user` AND `--public-key-file` are supplied, `--password` is NOT supplied: The client must posses 
+   1. the username supplied in `--user` 
+   2. a private key for the corresponding public key supplied in `--public-key-file`. 
+3. `--user` and `--password` are both supplied: The client can supply a userid/password pair.
+4. `--user` and `--password` and `--public-key-file` are NOT supplied: The client need not supply any credentials for access.
 
 See also:
+
 * [Medium article on this project](https://medium.com/google-cloud/sftp-access-to-google-cloud-storage-43ffd6134b0e)
 * [sftp command - man(1) - sftp](https://linux.die.net/man/1/sftp)
 * [SSH File Transfer Protocol](https://en.wikipedia.org/wiki/SSH_File_Transfer_Protocols)
