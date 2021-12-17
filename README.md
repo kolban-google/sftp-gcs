@@ -11,8 +11,6 @@ The current implementation of the solution supports only a single target bucket.
 - In order for the SFTP application to be able to read and write from GCS, it must have an identity that it can use to authenticate.  
 - In order for the SFTP application to be able to write to Google Cloud Logging, the identity must also have the role `roles/logging.admin` or `roles/logging.logWriter` in addition to having access to the GCS bucket. [Documentation reference](https://cloud.google.com/logging/docs/access-control)
 
-The current implementation uses application default credentials.  This means that the application uses the environment configured values.
-
 Arguments:
 
 * `--bucket [BUCKET_NAME]` - The name of the bucket to work against.  This is a **required** parameter.
@@ -34,6 +32,8 @@ When the sftp-gcs server is running we can connect SFTP clients to the server. I
    2. a private key for the corresponding public key supplied in `--public-key-file`. 
 3. `--user` and `--password` are both supplied: The client can supply a userid/password pair.
 4. `--user` and `--password` and `--public-key-file` are NOT supplied: The client need not supply any credentials for access.
+
+This project makes extensive use of the library called [SSH2](https://www.npmjs.com/package/ssh2)
 
 See also:
 

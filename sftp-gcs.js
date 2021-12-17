@@ -27,7 +27,7 @@ const myFormat = format.printf(({ level, message, timestamp }) => {
     return `${timestamp} ${level}: ${message}`;
 });
 
-const STATUS_CODE = ssh2.SFTP_STATUS_CODE;
+const STATUS_CODE = ssh2.utils.sftp.STATUS_CODE;
 
 const MODE_FILE = fs.constants.S_IFREG | fs.constants.S_IRWXU | fs.constants.S_IRWXG | fs.constants.S_IRWXO;
 const MODE_DIR = fs.constants.S_IFDIR | fs.constants.S_IRWXU | fs.constants.S_IRWXG | fs.constants.S_IRWXO;
@@ -41,7 +41,7 @@ const MODE_DIR = fs.constants.S_IFDIR | fs.constants.S_IRWXU | fs.constants.S_IR
 // * --service-account-key-file KEY_FILE
 //
 const argv = require('yargs')
-    .usage('$0 --bucket BUCKET_NAME [--port PORT_NUM] [--user USER_NAME] [--password PASSWORD]')
+    .usage('$0 --bucket BUCKET_NAME')
     .env('SFTP_GCS')
     .options('bucket').describe('bucket', 'GCS bucket to work with').string('bucket').nargs('bucket', 1).demandOption('bucket', 'Must supply a GCS bucket')
     .options('port').describe('port', 'Port number to listen upon').number('port').nargs('port', 1).default('port', 22, 'Default port is 22')

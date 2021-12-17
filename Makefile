@@ -9,8 +9,9 @@ run:
 	#node sftp-gcs.js --bucket kolban-test1 --port 9022 --service-account-key-file=keys/sftp-gcs-sa.jsonX --debug debug
 	#node sftp-gcs.js --bucket kolban-test1 --port 9022 --user=user --public-key-file=/home/kolban/.ssh/id_rsa.pub
 	#node sftp-gcs.js --bucket kolban-test1 --port 9022 --public-key-file=/home/kolban/.ssh/id_rsa.pub --debug debug
-	#node sftp-gcs.js --bucket gs://kolban-test1 --port 9022 --debug debug
-	node sftp-gcs.js --bucket gs://kolban-test-sftp --port 9022 --debug debug --user neil --password password
+	node sftp-gcs.js --bucket gs://kolban-test-sftp --port 9022 --debug debug
+	#node sftp-gcs.js --bucket gs://kolban-test-sftp --port 9022 --debug debug --user neil --password password > /dev/null 2>&1 &
+	#node sftp-gcs.js --bucket gs://kolban-test-sftp --port 9022 --debug debug --user neil --password password
 	#node sftp-gcs.js --bucket kolban-test1 --port 22
 
 cloudbuild:
