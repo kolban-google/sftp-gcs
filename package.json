@@ -16,9 +16,9 @@
     "url": "https://github.com/kolban-google/sftp-gcs.git"
   },
   "dependencies": {
-    "@google-cloud/logging-winston": "^4.0.1",
+    "@google-cloud/logging-winston": "^4.1.1",
     "@google-cloud/storage": "^5.5.0",
-    "ssh2": "^0.8.9",
+    "ssh2": "^1.4.0",
     "ssh2-streams": "^0.4.10",
     "winston": "^3.3.3",
     "yargs": "^16.1.1"
