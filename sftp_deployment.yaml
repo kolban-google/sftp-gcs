@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sftp-gcs-deployment
+spec:
+  selector:
+    matchLabels:
+      app: sftp-gcs
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: sftp-gcs
+    spec:
+      containers:
+      - name: sftp-gcs
+        image: gcr.io/emeritus-data-science/sftp-gcs:latest
+        env:
+          - name: bucket
+            value: "emeritus-test"
+          - name: port_var
+            value: "9022"
+          - name: username
+            valueFrom:
+              secretKeyRef:
+                name: sftp-client-credentials
+                key: user
+          - name: password
+            valueFrom:
+              secretKeyRef:
+                name: sftp-client-credentials
+                key: password
+
+        ports:
+        - containerPort: 9022
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sftp-gcs-service
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 9022
+    targetPort: 9022
+    protocol: TCP
+  selector:
+    app: sftp-gcs
