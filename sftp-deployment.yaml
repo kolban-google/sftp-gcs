@@ -19,9 +19,6 @@ spec:
           requests:
             memory: "8Gi"
             cpu: "500m"
-          limits:
-            memory: "12Gi"
-            cpu: "700m"
         env:
           - name: bucket
             value: "sis_emory"
