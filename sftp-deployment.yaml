@@ -1,34 +1,41 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: sftp-gcs-deployment
+  name: sftp-emory-deployment
 spec:
   selector:
     matchLabels:
-      app: sftp-gcs
+      app: sftp-emory
   replicas: 1
   template:
     metadata:
       labels:
-        app: sftp-gcs
+        app: sftp-emory
     spec:
       containers:
-      - name: sftp-gcs
-        image: gcr.io/emeritus-data-science/sftp-gcs:latest
+      - name: sftp-emory
+        image: gcr.io/emeritus-data-science/sftp-emory:latest
+        resources:
+          requests:
+            memory: "8Gi"
+            cpu: "500m"
+          limits:
+            memory: "12Gi"
+            cpu: "700m"
         env:
           - name: bucket
-            value: "emeritus-test"
+            value: "sis_emory"
           - name: port_var
             value: "9022"
           - name: username
             valueFrom:
               secretKeyRef:
-                name: sftp-client-credentials
+                name: sftp-emory-credentials
                 key: user
           - name: password
             valueFrom:
               secretKeyRef:
-                name: sftp-client-credentials
+                name: sftp-emory-credentials
                 key: password
 
         ports:
