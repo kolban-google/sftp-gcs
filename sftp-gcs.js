@@ -325,6 +325,7 @@ new ssh2.Server({
             session.on('sftp', function (accept, reject) {
                 logger.debug('Client SFTP session');
                 const openFiles = new Map(); // The map of open files.
+                const nextQueryMap = new Map(); // The map of nextQueries
 
                 // Get the file record (the open file) from the set of open files based on the value contained in the
                 // handle buffer.  This function either returns a fileRecord object or null if no corresponding file 
@@ -663,14 +664,20 @@ new ssh2.Server({
                         return sftpStream.status(reqId, STATUS_CODE.EOF);
                     }
 
-                    fileRecord.readComplete = true;
+                    fileRecord.readComplete = false;
+                    
+                    if (!nextQueryMap.get(fileRecord)) {
+                        nextQueryMap.set(fileRecord, {
+                            "autoPaginate": false,
+                            "delimiter": '/',
+                            "directory": fileRecord.path,
+                            "includeTrailingDelimiter": true
+                        });
+                    }
 
-                    bucket.getFiles({
-                        "autoPaginate": false,
-                        "delimiter": '/',
-                        "directory": fileRecord.path,
-                        "includeTrailingDelimiter": true
-                    }, (err, fileList, nextQuery, apiResponse) => {
+                    const nextQuery = nextQueryMap.get(fileRecord);
+
+                    bucket.getFiles(nextQuery, (err, fileList, nextQuery, apiResponse) => {
                         // The responses from a GCS file list are two parts.  One part is files in the current "directory" while the other part is the
                         // list of directories.  This is of course fake as GCS has no concept of directories.
                         //
@@ -762,7 +769,14 @@ new ssh2.Server({
                         */
 
 
-                        fileRecord.readComplete = true; // Flag that a subseqent call should return EOF.
+                        if (nextQuery) {
+                            nextQueryMap.set(fileRecord, nextQuery);
+                        }
+                        else {
+                            nextQueryMap.delete(fileRecord);
+                            fileRecord.readComplete = true;
+                        }
+
                         return sftpStream.name(reqId, results);
                     });
 
