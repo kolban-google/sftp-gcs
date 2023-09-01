@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
       - name: sftp-emory
-        image: gcr.io/emeritus-data-science/sftp-emory:latest
+        image: gcr.io/emeritus-data-science/sftp-gcs:latest
         resources:
           requests:
             memory: "8Gi"
