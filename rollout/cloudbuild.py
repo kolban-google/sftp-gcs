@@ -198,7 +198,7 @@ def deploy_kubernetes_yaml_files(updated_yamls):
             )
             LOG.info(resp_deploy)
         except Exception as e:
-            LOG.error("Error in applying yaml",stack_info=True)
+            LOG.error(f"Error while applying yaml: {yaml}", exc_info=True)
 
 
 if __name__ == "__main__":
