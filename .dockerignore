@@ -1,3 +1,5 @@
 node_modules
 rollout
 deployments
+env
+cloudbuild.yaml

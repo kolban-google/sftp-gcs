@@ -1,0 +1,9 @@
+steps:
+
+- name: 'gcr.io/cloud-builders/docker'
+
+  args: [ 'build', '-t', 'gcr.io/emeritus-data-science/sftp-gcs:latest', '.', '-f', 'Dockerfile' ]
+
+images:
+
+- 'gcr.io/emeritus-data-science/sftp-gcs:latest'
