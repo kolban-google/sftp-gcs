@@ -209,7 +209,7 @@ if __name__ == "__main__":
         service_account_dataflow = (
             "seshat-beam-runner@emeritus-data-science.iam.gserviceaccount.com"
         )
-        project_root = "/Users/arunbala/Development/js/sftp-gcs/sftp-gcs"
+        project_root = "/var/app/sftp-gcs"
 
         branch_name = "main"
 

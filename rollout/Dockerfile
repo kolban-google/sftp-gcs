@@ -6,7 +6,7 @@ RUN apt-get install -y google-cloud-sdk-gke-gcloud-auth-plugin
 RUN apt-get install -y kubectl
 
 RUN mkdir /var/app
-ADD . /var/app
+ADD rollout/cloudbuild.py /var/app
 
 WORKDIR /var/app
 
