@@ -105,3 +105,6 @@ dist
 
 # python env
 env/
+
+# Mac
+.DS_Store
