@@ -184,18 +184,21 @@ def deploy_kubernetes_yaml_files(updated_yamls):
         ["gke", project_id, gke_cluster.get("zone"), gke_cluster.get("name")]
     )
     for yaml in updated_yamls:
-        resp_deploy = subprocess.run(
-            [
-                """kubectl apply -f {} --context {} """.format(
-                    yaml,
-                    gke_context,
-                )
-            ],
-            capture_output=True,
-            shell=True,
-            check=True,
-        )
-        LOG.info(resp_deploy)
+        try:
+            resp_deploy = subprocess.run(
+                [
+                    """kubectl apply -f {} --context {} """.format(
+                        yaml,
+                        gke_context,
+                    )
+                ],
+                capture_output=True,
+                shell=True,
+                check=True,
+            )
+            LOG.info(resp_deploy)
+        except Exception as e:
+            LOG.error("Error in applying yaml",stack_info=True)
 
 
 if __name__ == "__main__":
