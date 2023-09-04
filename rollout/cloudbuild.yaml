@@ -6,7 +6,7 @@ steps:
       args: ["build", '--cache-from', 'gcr.io/${PROJECT_ID}/${_IMAGE_NAME}:latest',
                 "-t", "gcr.io/${PROJECT_ID}/${_IMAGE_NAME}:${SHORT_SHA}",
                 "-t", "gcr.io/${PROJECT_ID}/${_IMAGE_NAME}:latest",
-                "-f", "rollout/Dockerfile",
+                "-f", "Dockerfile",
                 "${_BUILD_DIR}"]
 
     - name: 'gcr.io/cloud-builders/docker'
@@ -14,20 +14,29 @@ steps:
 
     - name: 'gcr.io/cloud-builders/docker'
       args: ["push", "gcr.io/${PROJECT_ID}/${_IMAGE_NAME}:latest"]
+    
+    - name: 'gcr.io/cloud-builders/docker'
+      args: ['pull', 'gcr.io/${PROJECT_ID}/${_IMAGE_NAME}_ci:latest']
+
+    - name: 'gcr.io/cloud-builders/docker'
+      args: ["build", '--cache-from', 'gcr.io/${PROJECT_ID}/${_IMAGE_NAME}_ci:latest',
+                "-t", "gcr.io/${PROJECT_ID}/${_IMAGE_NAME}_ci:${SHORT_SHA}",
+                "-t", "gcr.io/${PROJECT_ID}/${_IMAGE_NAME}_ci:latest",
+                "-f", "rollout/Dockerfile",
+                "${_BUILD_DIR}"]
+
+    - name: 'gcr.io/cloud-builders/docker'
+      args: ["push", "gcr.io/${PROJECT_ID}/${_IMAGE_NAME}_ci:${SHORT_SHA}"]
+
+    - name: 'gcr.io/cloud-builders/docker'
+      args: ["push", "gcr.io/${PROJECT_ID}/${_IMAGE_NAME}_ci:latest"]
 
     - name: 'gcr.io/cloud-builders/docker'
       entrypoint: '/bin/bash'
       args:
         - '-c'
         - |
-          docker run --network cloudbuild gcr.io/${PROJECT_ID}/${_IMAGE_NAME}:latest tests/test_seshat.py ${_ENV}
-
-    - name: 'gcr.io/cloud-builders/docker'
-      entrypoint: '/bin/bash'
-      args:
-        - '-c'
-        - |
-          docker run --network cloudbuild gcr.io/${PROJECT_ID}/${_IMAGE_NAME}:latest rollout/cloudbuild_proto.py --env ${_ENV}
+          docker run --network cloudbuild gcr.io/${PROJECT_ID}/${_IMAGE_NAME}_ci:latest rollout/cloudbuild.py
 
 substitutions:
     _BUILD_DIR: "."
