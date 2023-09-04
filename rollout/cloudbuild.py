@@ -205,10 +205,6 @@ if __name__ == "__main__":
     try:
         # variables independent of environment
         project_id = "emeritus-data-science"
-        user_email = "sean.appleby@emeritus.org"
-        service_account_dataflow = (
-            "seshat-beam-runner@emeritus-data-science.iam.gserviceaccount.com"
-        )
         project_root = "/var/app/sftp-gcs"
 
         branch_name = "main"
