@@ -14,7 +14,7 @@ WORKDIR /var/app
 
 ENV PYTHONPATH /var/app
 
-RUN pip3 install --upgrade --no-cache-dir -r requirements.txt
+RUN pip3 install --upgrade --no-cache-dir -r requirements.txt && pip3 install urllib3==1.26.6
 
 ENTRYPOINT ["python3"]
 CMD ["--version"]
