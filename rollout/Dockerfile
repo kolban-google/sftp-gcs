@@ -1,4 +1,5 @@
 FROM python:3.7.7-stretch
+RUN echo "deb http://archive.debian.org/debian stretch main" > /etc/apt/sources.list
 RUN apt-get update
 RUN apt-get install -y libsnappy-dev
 RUN apt-get install -y curl
