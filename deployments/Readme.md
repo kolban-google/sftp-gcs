@@ -1,1 +1,1 @@
-### Note: Place All the Kubernetes Deploymnets Files here in this folder
+### Note: Place All the Kubernetes Deployments Files here in this folder
