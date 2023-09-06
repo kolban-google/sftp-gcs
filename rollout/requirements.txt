@@ -1,1 +1,2 @@
 google-cloud-build==3.8.3
+urllib3==1.26.6
