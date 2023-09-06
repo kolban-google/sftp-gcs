@@ -8,13 +8,13 @@ RUN apt-get install -y google-cloud-sdk-gke-gcloud-auth-plugin
 RUN apt-get install -y kubectl
 
 RUN mkdir /var/app
-ADD rollout/cloudbuild.py /var/app
+ADD rollout/ /var/app
 
 WORKDIR /var/app
 
 ENV PYTHONPATH /var/app
 
-RUN pip3 install --upgrade --no-cache-dir -r rollout/requirements.txt
+RUN pip3 install --upgrade --no-cache-dir -r requirements.txt
 
 ENTRYPOINT ["python3"]
 CMD ["--version"]
