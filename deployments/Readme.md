@@ -1,5 +1,5 @@
 ## Deploying SFTP Server
-### Place All the Kubernetes Deployments Files for creating SFTP Server here in this folder
+### Place All the Kubernetes Deployment Files for creating SFTP Server here in this folder
 
 1) Use `deployments/sftp-test-deployment.yaml` as reference and change `sftp-test` with `sftp-<SCHOOL_NAME>` in all the places including file name.
 
