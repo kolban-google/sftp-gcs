@@ -21,18 +21,18 @@ spec:
             cpu: "500m"
         env:
           - name: bucket
-            value: "sql-runner-artifacts"
+            value: "<BUCKET_NAME>"
           - name: port_var
             value: "9022"
           - name: username
             valueFrom:
               secretKeyRef:
-                name: sftp-emory-credentials
+                name: sftp-test-credentials
                 key: user
           - name: password
             valueFrom:
               secretKeyRef:
-                name: sftp-emory-credentials
+                name: sftp-test-credentials
                 key: password
 
           - name: sa_key_file_path
