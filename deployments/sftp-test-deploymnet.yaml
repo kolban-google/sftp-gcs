@@ -35,9 +35,19 @@ spec:
                 name: sftp-emory-credentials
                 key: password
 
+          - name: GOOGLE_APPLICATION_CREDENTIALS
+            value: /secrets/gcloud-auth/google-cloud-key.json
+
+        volumeMounts:
+        - mountPath: /secrets/gcloud-auth
+          name: gcloud-auth
+          readOnly: true
         ports:
         - containerPort: 9022
-
+      volumes:
+      - name: gcloud-auth
+        secret:
+          secretName: gcloud
 ---
 apiVersion: v1
 kind: Service
