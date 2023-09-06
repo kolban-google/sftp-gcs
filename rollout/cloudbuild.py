@@ -218,7 +218,7 @@ if __name__ == "__main__":
         )
         today_date = str(datetime.datetime.utcnow().date()) + " 00:00:00"
         last_build_date = fetch_most_recent_build(build_list, today_date)
-        last_build_date = "2023-09-01 13:15:00"  # use utc time
+        # last_build_date = "2023-09-01 13:15:00"  # use utc time
 
         checkout_from_github()
 
