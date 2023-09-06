@@ -55,6 +55,7 @@ metadata:
   name: sftp-test-service
 spec:
   type: LoadBalancer
+  # loadBalancerIP:
   ports:
   - port: 9022
     targetPort: 9022
