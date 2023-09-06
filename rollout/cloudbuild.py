@@ -185,6 +185,9 @@ def deploy_kubernetes_yaml_files(updated_yamls):
     )
     for yaml in updated_yamls:
         try:
+            if "sftp-test-deployment.yaml" in yaml:
+                LOG.info("Skipping sftp-test-deployment.yaml...")
+                continue
             resp_deploy = subprocess.run(
                 [
                     """kubectl apply -f {} --context {} """.format(
@@ -207,7 +210,7 @@ if __name__ == "__main__":
         project_id = "emeritus-data-science"
         project_root = "/var/app/sftp-gcs"
 
-        branch_name = "sftp-gcs-ci"
+        branch_name = "main"
 
         gke_cluster = {"name": "emeritus-ds-1", "zone": "us-central1-c"}
 

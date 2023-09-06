@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sftp-insead-deployment
+spec:
+  selector:
+    matchLabels:
+      app: sftp-insead
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: sftp-insead
+    spec:
+      containers:
+      - name: sftp-insead
+        image: gcr.io/emeritus-data-science/sftp-gcs:latest
+        resources:
+          requests:
+            memory: "8Gi"
+            cpu: "500m"
+        env:
+          - name: bucket
+            value: "sis_insead"
+          - name: port_var
+            value: "9022"
+          - name: username
+            valueFrom:
+              secretKeyRef:
+                name: sftp-insead-credentials
+                key: user
+          - name: password
+            valueFrom:
+              secretKeyRef:
+                name: sftp-insead-credentials
+                key: password
+
+          - name: sa_key_file_path
+            value: /secrets/gcloud-auth/google-cloud-key.json
+
+        volumeMounts:
+        - mountPath: /secrets/gcloud-auth
+          name: gcloud-auth
+          readOnly: true
+        ports:
+        - containerPort: 9022
+      volumes:
+      - name: gcloud-auth
+        secret:
+          secretName: gcloud
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sftp-insead-service
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 130.211.200.76
+  ports:
+  - port: 9022
+    targetPort: 9022
+    protocol: TCP
+  selector:
+    app: sftp-insead
