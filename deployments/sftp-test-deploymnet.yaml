@@ -35,7 +35,7 @@ spec:
                 name: sftp-emory-credentials
                 key: password
 
-          - name: GOOGLE_APPLICATION_CREDENTIALS
+          - name: sa_key_file_path
             value: /secrets/gcloud-auth/google-cloud-key.json
 
         volumeMounts:

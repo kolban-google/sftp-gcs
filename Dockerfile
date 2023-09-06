@@ -6,4 +6,4 @@ COPY . .
 
 EXPOSE $port_var
 
-CMD node sftp-gcs.js --bucket $bucket  --port $port_var --user $username --password $password
+CMD node sftp-gcs.js --bucket $bucket  --port $port_var --user $username --password $password --service-account-key-file $sa_key_file_path
