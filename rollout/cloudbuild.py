@@ -221,7 +221,7 @@ if __name__ == "__main__":
         # last_build_date = "2023-09-01 13:15:00"  # use utc time
 
         checkout_from_github()
-        
+
         (changed_deployments_list, deleted_deployments_list) = find_changed_files(
             last_build_date
         )
