@@ -152,7 +152,11 @@ def find_changed_files(trigger_date):
     )
 
     changed_file_list = subprocess.run(
-        ["git diff --name-only --no-renames origin/{} -- deployments".format(branch_name)],
+        [
+            "git diff --name-only --no-renames origin/{} -- deployments".format(
+                branch_name
+            )
+        ],
         capture_output=True,
         shell=True,
         check=True,
