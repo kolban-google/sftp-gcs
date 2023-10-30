@@ -17,7 +17,7 @@ apiVersion: apps/v1
          image: gcr.io/emeritus-data-science/sftp-umass:latest
          resources:
            requests:
-             memory: "8Gi"
+             memory: "4Gi"
              cpu: "500m"
          env:
            - name: bucket
