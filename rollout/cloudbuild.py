@@ -205,7 +205,7 @@ def deploy_kubernetes_yaml_files(updated_yamls):
             )
             LOG.info(resp_deploy)
         except Exception as e:
-            LOG.exception(f"Error while applying yaml: {yaml}", exc_info=True)
+            LOG.exception(f"Error while applying yaml: {yaml}", stack_info=True)
 
 
 if __name__ == "__main__":
@@ -237,5 +237,5 @@ if __name__ == "__main__":
             deploy_kubernetes_yaml_files(changed_deployments_list)
 
     except Exception as e:
-        LOG.exception("Error in build script", exc_info=True)
+        LOG.exception("Error in build script", stack_info=True)
         raise e
