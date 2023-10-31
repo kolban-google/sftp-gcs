@@ -14,9 +14,12 @@ spec:
     spec:
       containers:
       - name: sftp-emory
-        image: gcr.io/emeritus-data-science/sftp-emory:latest
+        image: gcr.io/emeritus-data-science/sftp-gcs:latest
         resources:
           requests:
+            memory: "8Gi"
+            cpu: "500m"
+          limits:
             memory: "8Gi"
             cpu: "500m"
         env:
@@ -35,6 +38,19 @@ spec:
                 name: sftp-emory-credentials
                 key: password
 
+          - name: sa_key_file_path
+            value: /secrets/gcloud-auth/google-cloud-key.json
+
+        volumeMounts:
+        - mountPath: /secrets/gcloud-auth
+          name: gcloud-auth
+          readOnly: true
+        ports:
+        - containerPort: 9022
+      volumes:
+      - name: gcloud-auth
+        secret:
+          secretName: gcloud
         ports:
         - containerPort: 9022
 
