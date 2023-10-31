@@ -17,7 +17,7 @@ spec:
         image: gcr.io/emeritus-data-science/sftp-gcs:latest
         resources:
           requests:
-            memory: "8Gi"
+            memory: "4Gi"
             cpu: "500m"
           limits:
             memory: "8Gi"
