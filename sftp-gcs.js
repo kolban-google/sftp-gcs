@@ -958,7 +958,7 @@ new ssh2.Server({
     client.on('error', (err) => {
         logger.debug(`ERROR(client.on): ${util.inspect(err)}`);
     });
-}).listen(SERVER_PORT, '0.0.0.0', function () {
+}).setMaxListeners(50).listen(SERVER_PORT, '0.0.0.0', function () {
     logger.info("****************************************");
     logger.info("*** Google Cloud Storage SFTP Server ***");
     logger.info("****************************************");
